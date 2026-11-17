@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from .base import Parser
@@ -9,7 +10,11 @@ _REGISTRY = {".docx": DocxParser, ".epub": EpubParser, ".pdf": PyMuPDFParser}
 
 
 def get_parser(path: Path) -> Parser:
-    cls = _REGISTRY.get(Path(path).suffix.lower())
+    suffix = Path(path).suffix.lower()
+    if suffix == ".pdf" and os.environ.get("TOOLBOOK_PDF_PARSER", "").lower() == "mineru":
+        from .pdf_mineru import MinerUParser
+        return MinerUParser()
+    cls = _REGISTRY.get(suffix)
     if cls is None:
         raise ValueError(f"不支持的格式: {Path(path).suffix}（支持 docx/epub/pdf）")
     return cls()
