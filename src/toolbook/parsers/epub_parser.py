@@ -18,7 +18,7 @@ class EpubParser:
             it = items.get(sid)
             if it is None:
                 continue
-            soup = BeautifulSoup(it.get_content(), "lxml")
+            soup = BeautifulSoup(it.get_content(), "xml")
             if soup.find("nav"):
                 continue
             loc = f"spine{idx}:{it.get_name()}"
