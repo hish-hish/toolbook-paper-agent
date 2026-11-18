@@ -302,7 +302,7 @@ uv run pytest          # 全量 107 个，离线不触网
 | **M4 论文问答+UI** | 11.26–11.28 | ✅ 11.18 完成 | CORE 上传→30 条目录→知识点提问附库内出处（6.2/7.4），浏览器端到端通过；79 测试 |
 | **M4 增强：上下文记忆** | — | ✅ 完成 | A 5 轮 / B 按论文独立+自动压缩+换论文隔离；6 例抽检通过；87 测试 |
 | **M4 再增强：回答展示** | — | ✅ 完成（commit `b64fa7a`） | 五项要求浏览器验证通过；**107 测试** |
-| **M5 评测与演练** | 11.28–11.29 | 🔨 脚手架就绪（待审核题库+择时跑分） | 30 题库（22 在库+8 超纲，节号零编造）+ A–E 五组消融开关+跑分脚本已实现；**118 测试**；4–5h 跑分待用户择时 |
+| **M5 评测与演练** | 11.28–11.29 | 🔨 脚手架就绪（commit `e49dc09`，题库已通过，待择时跑分） | 30 题库（22 在库+8 超纲，节号零编造）+ A–E 五组消融开关+跑分脚本已实现；**118 测试**；4–5h 跑分待用户择时 |
 | 比赛 | 11.30 | — | 提交作品包 |
 
 > M1–M4 均**提前于排期**完成。实施计划在 `docs/superpowers/plans/2026-11-18-m1/m2/m3/m4/m4b-*.md`。
@@ -377,7 +377,7 @@ PYTHONIOENCODING=utf-8 uv run --no-sync python scripts/eval_m5.py
 
 - **密钥**：只放 `.env`（用户自己填）或环境变量 `SILICONFLOW_API_KEY`；**绝不贴聊天、绝不提交**；`.env` 已 gitignore。
 - **数据**：书/论文 PDF 存 `data/`（已 gitignore），**不提交**；`data/library.db`、`data/chroma/`、`data/models/` 均本地持久。
-- **Git**：仓库 https://github.com/hish-hish/toolbook-paper-agent（**私有**）；master 跟踪 origin/master，最新 `b64fa7a` 已推送。
+- **Git**：仓库 https://github.com/hish-hish/toolbook-paper-agent（**私有**）；master 跟踪 origin/master，最新 `e49dc09`（M5 脚手架）已推送。
 - **中文 commit**：每次新增 commit 说明用中文（可保留 `feat:/fix:/docs:` 前缀），正文中文；**不改写/翻译/rebase 已有历史**。
 - **中文注释**：每个 `.py` 文件开头中文模块 docstring + 每个函数/类/功能块中文注释（zh-code-style 规范）。
 - **核验链绝不砍**：工期再紧，两级核验 + 出处 + 拒答路径是底线，可砍的只有增强项（重排/双语改写可后置）。
