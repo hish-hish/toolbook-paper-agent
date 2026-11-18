@@ -15,14 +15,16 @@ def test_tokenize_mixed():
 
 @pytest.fixture
 def store(tmp_path):
-    # 两节小库：2.1 傅里叶、2.2 采样，各一个子块
+    # 三节小库：2.1 傅里叶、2.2 采样、3.1 信道编码（第三块避免 BM25 两文档 IDF=0 的退化情形）
     s = LibraryStore(tmp_path / "t.db")
     with s.transaction():
         doc_id = s.add_document("书", "docx", "h", "x.docx")
         sid1 = s.insert_section(doc_id, None, "2.1", "傅里叶变换", 2, "original", "p1", 1, "傅里叶变换把信号分解为不同频率的正弦分量。")
         sid2 = s.insert_section(doc_id, None, "2.2", "采样定理", 2, "original", "p2", 1, "采样定理给出从离散样本无失真恢复连续信号的条件。")
+        sid3 = s.insert_section(doc_id, None, "3.1", "信道编码", 2, "original", "p3", 1, "信道编码通过增加冗余提高传输可靠性。")
         s.insert_chunks(sid1, ["傅里叶变换把信号分解为不同频率的正弦分量。"])
         s.insert_chunks(sid2, ["采样定理给出从离散样本无失真恢复连续信号的条件。"])
+        s.insert_chunks(sid3, ["信道编码通过增加冗余提高传输可靠性。"])
     yield s
     s.close()
 
