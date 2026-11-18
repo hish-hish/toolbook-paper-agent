@@ -19,6 +19,7 @@ class AgentState(TypedDict, total=False):
     """任务单：随图流转，每个节点读取并更新其中字段。"""
     question: str
     query: str
+    paper_context: str
     db_path: object
     use_rerank: bool
     hits: list
@@ -37,8 +38,9 @@ def retrieve_node(state: AgentState) -> dict:
 
 
 def generate_node(state: AgentState) -> dict:
-    """生成节点：LLM 基于检索父块写逐句带引用的草稿。"""
-    return {"draft": generate_draft(state["question"], state["hits"])}
+    """生成节点：LLM 基于检索父块写逐句带引用的草稿（可带论文提问背景）。"""
+    return {"draft": generate_draft(state["question"], state["hits"],
+                                    state.get("paper_context", ""))}
 
 
 def verify_node(state: AgentState) -> dict:
@@ -96,10 +98,16 @@ def build_graph():
     return g.compile()
 
 
-def ask(question: str, db_path=config.DEFAULT_DB, use_rerank: bool = True) -> AnswerResult:
-    """模块A 问答主入口：跑完整 检索→生成→核验→（重试/拒答）流程。"""
+def ask(question: str, db_path=config.DEFAULT_DB, use_rerank: bool = True,
+        paper=None) -> AnswerResult:
+    """问答主入口（模块A/B 共用）：paper 为 PaperInfo 时先做论文上下文查询改写。"""
+    query, ctx = question, ""
+    if paper is not None:
+        ctx = paper.context()
+        query = llm.contextualize_query(question, ctx)
     graph = build_graph()
-    final = graph.invoke({"question": question, "query": question,
+    final = graph.invoke({"question": question, "query": query,
+                          "paper_context": ctx,
                           "db_path": db_path, "use_rerank": use_rerank,
                           "retries": 0, "searched": []})
     return final["result"]
