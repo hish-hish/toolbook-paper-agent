@@ -1,3 +1,4 @@
+"""核心数据模型：解析块、章节树节点、导入结果、核验句与最终答案。"""
 from dataclasses import dataclass, field
 
 
@@ -34,3 +35,34 @@ class ImportResult:
     skipped: bool = False
     sections: int = 0
     chunks: int = 0
+
+
+@dataclass
+class VerifiedSentence:
+    """一条核验通过的答案句：文本 + 类型 + 引用索引 + 核验徽章 + 原文依据。"""
+    text: str
+    kind: str    # "excerpt"（原文摘录）| "summary"（归纳）
+    ref: int     # 引用检索结果（hits）的索引
+    badge: str   # "mechanical"（机械核验✓）| "llm"（LLM核验✓）
+    quote: str   # 支撑该句的原文片段
+
+
+@dataclass
+class SourceRef:
+    """出处目录条目：书名 + 章节号 + 标题 + 编号来源 + 原文定位。"""
+    doc_title: str
+    number: str
+    title: str
+    source: str  # "original" | "system"
+    locator: str
+
+
+@dataclass
+class AnswerResult:
+    """最终答案：核验句 + 出处目录；拒答时 sentences 为空且 refused=True。"""
+    sentences: list[VerifiedSentence]
+    sources: list[SourceRef]
+    refused: bool = False
+    retries: int = 0
+    searched: list[str] = field(default_factory=list)
+    message: str = ""
