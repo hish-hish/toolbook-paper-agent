@@ -27,10 +27,14 @@ def _extract_title(doc) -> str:
     if meta:
         return meta
     spans = []
+    # 标题只可能在首页上部；正文中部的大字号字符（章节首字母等）不参与
+    y_limit = doc[0].rect.height * 0.35
     for block in doc[0].get_text("dict")["blocks"]:
         if block.get("type") != 0:
             continue
         for line in block["lines"]:
+            if line["bbox"][1] > y_limit:
+                continue
             for s in line["spans"]:
                 if s["text"].strip():
                     spans.append((s["size"], line["bbox"][1], s["text"]))
@@ -42,7 +46,8 @@ def _extract_title(doc) -> str:
     for size, y, text in spans:
         if size >= max_size * 0.95:
             lines.setdefault(round(y), []).append(text)
-    title = " ".join("".join(v) for _, v in sorted(lines.items()))
+    title = " ".join(" ".join(v) for _, v in sorted(lines.items()))
+    title = re.sub(r"\s+", " ", title)
     title = re.split(r"\bAbstract\b", title)[0].strip()
     return title or Path(doc.name).stem
 

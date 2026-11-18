@@ -16,6 +16,8 @@ def paper_path(tmp_path):
     page.insert_text((72, 200), "Left column first line.", fontsize=10)
     page.insert_text((72, 220), "Left column second line.", fontsize=10)
     page.insert_text((320, 200), "Right column first line.", fontsize=10)
+    # 正文中部的大字号首字母（如章节标题 drop cap），不得被误认为论文标题
+    page.insert_text((72, 570), "I", fontsize=28)
     page2 = doc.new_page(width=612, height=792)
     page2.insert_text((72, 80), "II. Method", fontsize=11)
     page2.insert_text((72, 110), "Method body text.", fontsize=10)
