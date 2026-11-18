@@ -73,3 +73,34 @@ def test_rerank_overrides_order_and_score(library, monkeypatch):
     assert hits[0].number == "2.2"
     assert hits[0].score == pytest.approx(0.9)
     assert hits[0].score >= hits[1].score
+
+
+def test_use_vector_false_skips_vector_route(library, monkeypatch):
+    # 消融开关：关向量路时 vector_search 绝不被调用，纯 BM25 关键词命中 2.1
+    calls = []
+    monkeypatch.setattr(rt, "vector_search", lambda *a, **k: calls.append(1) or [])
+    hits = rt.hybrid_search("傅里叶变换", db_path=library, use_llm=False,
+                            use_rerank=False, use_vector=False)
+    assert calls == []
+    assert hits and hits[0].number == "2.1"
+    assert all(h.matched_by == "bm25" for h in hits)
+
+
+def test_use_bm25_false_skips_bm25_route(library, monkeypatch):
+    # 消融开关：关 BM25 路时其 search 绝不被调用，纯向量命中 2.2（fixture 假向量偏向 chunk2）
+    bm25_calls = []
+
+    class FakeBM25:
+        def __init__(self, store):
+            pass
+
+        def search(self, q, n):
+            bm25_calls.append(q)
+            return []
+
+    monkeypatch.setattr(rt, "BM25Index", FakeBM25)
+    hits = rt.hybrid_search("怎样从离散样本恢复连续信号", db_path=library, use_llm=False,
+                            use_rerank=False, use_bm25=False)
+    assert bm25_calls == []
+    assert hits and hits[0].number == "2.2"
+    assert all(h.matched_by == "vector" for h in hits)

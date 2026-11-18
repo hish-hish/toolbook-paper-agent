@@ -37,24 +37,32 @@ def rrf_fuse(rankings: list[list[int]], k: int = 60) -> list[tuple[int, float]]:
 
 def hybrid_search(question: str, db_path=config.DEFAULT_DB, top_k: int = 5,
                   use_llm: bool = True, use_rerank: bool = True,
-                  doc_id: int | None = None) -> list[SearchHit]:
-    """混合检索主入口：返回 top_k 个父块（小节），含出处与命中方式。"""
+                  doc_id: int | None = None,
+                  use_bm25: bool = True, use_vector: bool = True) -> list[SearchHit]:
+    """混合检索主入口：返回 top_k 个父块（小节），含出处与命中方式。
+
+    use_bm25/use_vector 是消融开关：关闭某路即整路跳过（默认全开，行为与原先一致）。
+    """
     store = LibraryStore(db_path)
     try:
-        bm25 = BM25Index(store)
-        # 1) 查询改写（断网自动回退原问题）
-        kw = rewrite_query(question) if use_llm else {"zh": question, "en": ""}
-        # 2) BM25 路：原问题 + 中文关键词 + 英文关键词各查一次
+        # 1-2) BM25 路（含查询改写）：use_bm25=False 时不建索引、不调改写、不检索
         bm25_rankings, bm25_ids = [], set()
-        for q in (question, kw["zh"], kw["en"]):
-            if q.strip():
-                ranking = [cid for cid, _ in bm25.search(q, 30)]
-                bm25_rankings.append(ranking)
-                bm25_ids.update(ranking)
-        # 3) 向量路：原问题语义检索
-        vec_ranking = [cid for cid, _ in vector_search(question, 30, doc_id)]
-        vec_ids = set(vec_ranking)
-        # 4) RRF 融合多路名次
+        if use_bm25:
+            bm25 = BM25Index(store)
+            # 查询改写（断网自动回退原问题）
+            kw = rewrite_query(question) if use_llm else {"zh": question, "en": ""}
+            # 原问题 + 中文关键词 + 英文关键词各查一次
+            for q in (question, kw["zh"], kw["en"]):
+                if q.strip():
+                    ranking = [cid for cid, _ in bm25.search(q, 30)]
+                    bm25_rankings.append(ranking)
+                    bm25_ids.update(ranking)
+        # 3) 向量路：use_vector=False 时跳过语义检索
+        vec_ranking, vec_ids = [], set()
+        if use_vector:
+            vec_ranking = [cid for cid, _ in vector_search(question, 30, doc_id)]
+            vec_ids = set(vec_ranking)
+        # 4) RRF 融合多路名次（被关闭的路是空列表，不影响融合）
         fused = rrf_fuse(bm25_rankings + [vec_ranking])
         # 5) 子块 → 父块映射与去重（保留最佳名次，记录命中方式）
         chunk_map = {r["chunk_id"]: r["section_id"] for r in store.conn.execute(

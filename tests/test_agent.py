@@ -168,3 +168,32 @@ def test_ask_no_study_when_refused(patch_nodes):
     patch_nodes.setattr(ag, "build_study_guide", lambda *a, **k: called.__setitem__("study", called["study"] + 1))
     r = ag.ask("超纲问题？")
     assert r.refused and r.study is None and called["study"] == 0
+
+
+def test_ask_threads_ablation_flags(patch_nodes):
+    # 消融：ask 把 use_bm25/use_vector/use_llm/use_rerank 透传到检索节点的 hybrid_search
+    seen = {}
+
+    def fake_search(q, **k):
+        seen.update(k)
+        return [_hit()]
+
+    patch_nodes.setattr(ag, "hybrid_search", fake_search)
+    patch_nodes.setattr(ag, "verify_draft", lambda d, h: [VerifiedSentence("原文内容", "excerpt", 0, "mechanical", "原文内容")])
+    ag.ask("采样定理？", use_bm25=False, use_vector=True, use_llm=False, use_rerank=False)
+    assert seen["use_bm25"] is False and seen["use_vector"] is True
+    assert seen["use_llm"] is False and seen["use_rerank"] is False
+
+
+def test_ask_default_flags_all_on(patch_nodes):
+    # 默认全开：不传开关时检索仍收到 use_bm25/use_vector/use_llm=True（向后兼容）
+    seen = {}
+
+    def fake_search(q, **k):
+        seen.update(k)
+        return [_hit()]
+
+    patch_nodes.setattr(ag, "hybrid_search", fake_search)
+    patch_nodes.setattr(ag, "verify_draft", lambda d, h: [VerifiedSentence("原文内容", "excerpt", 0, "mechanical", "原文内容")])
+    ag.ask("采样定理？")
+    assert seen["use_bm25"] is True and seen["use_vector"] is True and seen["use_llm"] is True
