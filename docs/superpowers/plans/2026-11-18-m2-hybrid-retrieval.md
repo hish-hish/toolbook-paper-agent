@@ -766,6 +766,8 @@ Expected: 2 passed
 
 - [ ] **Step 5: 真模型限时验证（依赖 Task 1 后台安装结果）**
 
+> 执行记录：hf-mirror 下载停滞（64MB 后卡死），改用 ModelScope `snapshot_download('BAAI/bge-reranker-v2-m3', local_dir='data/models/bge-reranker-v2-m3')`；rerank.py 优先从该本地目录离线加载（config.RERANK_MODEL_DIR），不存在时回退 HF 镜像在线加载。
+
 若 sentence-transformers 已装好：
 Run: `uv run --no-sync python -c "from toolbook.rerank import rerank_scores; print(rerank_scores('采样定理', ['采样定理给出恢复条件', '傅里叶变换分解频率']))"`
 Expected: 两个分数，第一个更高（首次下载模型约 2GB，限时 30 分钟；超时/失败则记录降级，M2 先以 RRF 序交付，rerank 赛后补——符合"砍增强项保主干"）。
