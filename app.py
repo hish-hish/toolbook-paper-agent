@@ -16,6 +16,7 @@ from toolbook.agent import ask
 from toolbook.importer import import_file
 from toolbook.models import AnswerResult
 from toolbook.paper import parse_paper
+from toolbook.session import Conversation
 from toolbook.store import LibraryStore
 from toolbook.vector_index import build_vector_index
 
@@ -39,8 +40,15 @@ def render_answer(r: AnswerResult):
             st.markdown(f"[{i}] 《{src.doc_title}》 {src.number} {title}{mark}（{src.locator}）")
 
 
-def chat_block(key: str, paper=None):
-    """通用问答区：历史消息 + 输入框 + spinner 跑 ask()；key 区分模块A/B 会话。"""
+def answer_gist(r: AnswerResult) -> str:
+    """把一条答案压成记忆要点：核验句拼接；拒答记拒答原因。"""
+    if r.refused:
+        return r.message
+    return "\n".join(s.text for s in r.sentences)[:400]
+
+
+def chat_block(key: str, paper=None, conv=None):
+    """通用问答区：历史消息 + 输入框 + spinner 跑 ask()；key 区分会话，conv 为上下文记忆。"""
     hist_key = f"messages_{key}"
     if hist_key not in st.session_state:
         st.session_state[hist_key] = []
@@ -58,9 +66,13 @@ def chat_block(key: str, paper=None):
         st.markdown(prompt)
     with st.chat_message("assistant"):
         with st.spinner("检索 → 生成 → 核验中（约 30–60 秒）…"):
-            r = ask(prompt, use_rerank=st.session_state.get("use_rerank", True), paper=paper)
+            r = ask(prompt, use_rerank=st.session_state.get("use_rerank", True),
+                    paper=paper, history_context=conv.context() if conv else "")
         render_answer(r)
     st.session_state[hist_key].append(("assistant", r))
+    # 答完记一轮记忆（下一问的指代/追问靠它补全）
+    if conv is not None:
+        conv.add(prompt, answer_gist(r))
 
 
 # ---------- 侧边栏：重排开关 + 资源库管理 ----------
@@ -108,8 +120,13 @@ store.close()
 # ---------- 主区：两个问答页签 ----------
 tab_a, tab_b = st.tabs(["资源库问答（模块A）", "论文问答（模块B）"])
 with tab_a:
-    st.caption("答案只返回核验通过的内容：机械✓=原文摘录子串匹配，LLM✓=逐句裁判+原文双锚定。")
-    chat_block("a")
+    st.caption("答案只返回核验通过的内容：机械✓=原文摘录子串匹配，LLM✓=逐句裁判+原文双锚定。上下文记忆：自动保留最近 5 轮。")
+    conv_a = st.session_state.setdefault("conv_a", Conversation(max_turns=5))
+    if st.button("清空对话", key="clear_a"):
+        conv_a.clear()
+        st.session_state["messages_a"] = []
+        st.rerun()
+    chat_block("a", conv=conv_a)
 with tab_b:
     st.caption("上传论文 PDF → 展示目录 → 就知识点提问，答案附本地资源库出处（论文本身不作答案依据）。")
     paper_up = st.file_uploader("上传论文 PDF", type=["pdf"], key="paper_upload")
@@ -136,6 +153,15 @@ with tab_b:
         if paper.abstract:
             with st.expander("摘要"):
                 st.write(paper.abstract)
-        chat_block("b", paper=paper)
+        # 每篇论文独立记忆与聊天记录：换论文不串上下文，新论文从空开始
+        convs = st.session_state.setdefault("convs_b", {})
+        conv = convs.setdefault(st.session_state["paper_name"],
+                                Conversation(max_turns=6, compress_threshold=6, keep_recent=3))
+        st.caption("每篇论文的对话记忆独立；超过 6 轮自动压缩旧轮；换论文不串上下文。")
+        if st.button("清空本论文对话", key="clear_b"):
+            conv.clear()
+            st.session_state[f"messages_b_{st.session_state['paper_name']}"] = []
+            st.rerun()
+        chat_block(f"b_{st.session_state['paper_name']}", paper=paper, conv=conv)
     else:
         st.info("请先上传论文 PDF")
