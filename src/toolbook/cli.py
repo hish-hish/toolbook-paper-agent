@@ -30,6 +30,10 @@ def main(argv=None):
     p_search.add_argument("-k", type=int, default=5)
     p_search.add_argument("--no-llm", action="store_true", help="跳过 LLM 查询改写")
     p_search.add_argument("--no-rerank", action="store_true", help="跳过本地重排")
+    # --- M3 新增：资源库问答（检索→核验→带出处答案/拒答） ---
+    p_ask = sub.add_parser("ask", help="资源库问答（两级核验+出处目录）")
+    p_ask.add_argument("question")
+    p_ask.add_argument("--no-rerank", action="store_true", help="跳过本地重排")
     args = ap.parse_args(argv)
 
     if args.cmd == "import":
@@ -62,6 +66,23 @@ def main(argv=None):
             print(f"《{h.doc_title}》 {h.number} {title}{badge}  <{h.locator}>  "
                   f"score={h.score:.4f} via={h.matched_by}")
             print(f"  {h.text[:150]}...")
+        return
+    if args.cmd == "ask":
+        # 问答：跑 LangGraph 全流程，打印核验徽章句 + 出处目录（或拒答）
+        from .agent import ask
+        r = ask(args.question, args.db, use_rerank=not args.no_rerank)
+        if r.refused:
+            print(f"[拒答] {r.message}")
+            print(f"已尝试查询：{r.searched}（重试 {r.retries} 次）")
+            return
+        for s in r.sentences:
+            mark = "机械✓" if s.badge == "mechanical" else "LLM✓"
+            print(f"[{mark}][{s.ref}] {s.text}")
+        print(f"\n出处目录（重试 {r.retries} 次）：")
+        for i, src in enumerate(r.sources):
+            badge = "" if src.source == "original" else " [系统编号]"
+            title = src.title.removeprefix(src.number).strip() or src.title
+            print(f"  [{i}] 《{src.doc_title}》 {src.number} {title}{badge}  <{src.locator}>")
         return
     store = LibraryStore(args.db)
     if args.cmd == "list":

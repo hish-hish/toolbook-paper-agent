@@ -1,0 +1,22 @@
+[
+  {"id": 1, "question": "奈奎斯特采样定理说了什么？", "expect": ["3.1"]},
+  {"id": 2, "question": "两径信道为什么可以写成一个卷积？", "expect": ["3.2"]},
+  {"id": 3, "question": "DFT 的物理意义是什么？", "expect": ["3.3"]},
+  {"id": 4, "question": "复数在信号表示中起什么作用？", "expect": ["2.1", "2.2"]},
+  {"id": 5, "question": "匹配滤波怎样产生一个离散样本？", "expect": ["6.2"]},
+  {"id": 6, "question": "QPSK 的误码率怎么推导？", "expect": ["6.3"]},
+  {"id": 7, "question": "循环前缀为什么能把线性卷积变成循环卷积？", "expect": ["8.2", "8.1", "8.3"]},
+  {"id": 8, "question": "最小二乘估计的几何解释是什么？", "expect": ["5.2"]},
+  {"id": 9, "question": "SVD 怎样揭示可观测与不可观测方向？", "expect": ["5.3"]},
+  {"id": 10, "question": "雷达方程为什么是四次方损耗？", "expect": ["10.2"]},
+  {"id": 11, "question": "距离分辨率由什么决定？", "expect": ["10.3"]},
+  {"id": 12, "question": "模糊范围与分辨率有什么区别？", "expect": ["10.4"]},
+  {"id": 13, "question": "LMMSE 信道估计的原理是什么？", "expect": ["7.4"]},
+  {"id": 14, "question": "导频在信道估计中起什么作用？", "expect": ["7.2", "7.3"]},
+  {"id": 15, "question": "What is the role of the cyclic prefix in OFDM?", "expect": ["8.2", "8.3", "8.1"]},
+  {"id": 16, "question": "How does Doppler shift cause inter-carrier interference?", "expect": ["8.4"]},
+  {"id": 17, "question": "量子色动力学中的渐近自由怎么证明？", "expect_refuse": true},
+  {"id": 18, "question": "如何用 CRISPR 技术编辑基因？", "expect_refuse": true},
+  {"id": 19, "question": "唐朝的科举制度是怎样的？", "expect_refuse": true},
+  {"id": 20, "question": "大语言模型 KV cache 的显存优化有哪些工程技巧？", "expect_refuse": true}
+]
