@@ -63,3 +63,13 @@ def test_parent_dedup(library):
     hits = rt.hybrid_search("傅里叶 采样 信号", db_path=library, use_llm=False, use_rerank=False, top_k=10)
     section_ids = [h.section_id for h in hits]
     assert len(section_ids) == len(set(section_ids))
+
+
+def test_rerank_overrides_order_and_score(library, monkeypatch):
+    # 假重排把 RRF 第二名抬到第一：排序与展示分都应被重排分覆盖
+    import toolbook.rerank as rr
+    monkeypatch.setattr(rr, "rerank_scores", lambda q, texts: [0.2, 0.9, 0.1][:len(texts)])
+    hits = rt.hybrid_search("傅里叶变换", db_path=library, use_llm=False, use_rerank=True)
+    assert hits[0].number == "2.2"
+    assert hits[0].score == pytest.approx(0.9)
+    assert hits[0].score >= hits[1].score

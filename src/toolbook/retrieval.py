@@ -84,12 +84,14 @@ def hybrid_search(question: str, db_path=config.DEFAULT_DB, top_k: int = 5,
             hits.append(SearchHit(row["doc_id"], sid, row["number"], row["title"],
                                   row["source"], row["locator"], text, score,
                                   matched, row["doc_title"]))
-        # 7) 本地重排（失败自动降级为 RRF 序）
+        # 7) 本地重排（失败自动降级为 RRF 序）；成功时用重排分覆盖展示分
         if use_rerank and hits:
             from .rerank import rerank_scores
             scores = rerank_scores(question, [h.text[:1500] for h in hits])
             if scores is not None:
-                hits = [h for _, h in sorted(zip(scores, hits), key=lambda x: -x[0])]
+                for h, s in zip(hits, scores):
+                    h.score = s
+                hits = sorted(hits, key=lambda h: -h.score)
         return hits[:top_k]
     finally:
         store.close()
