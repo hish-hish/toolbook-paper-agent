@@ -58,14 +58,34 @@ class SourceRef:
 
 
 @dataclass
+class StudySection:
+    """学习指引中的一节：节号 + 标题 + 页码 + 书名 + 编号来源 + 内容简介（推荐节才填）。"""
+    doc_title: str
+    number: str
+    title: str
+    locator: str
+    source: str  # "original" | "system"
+    summary: str = ""
+
+
+@dataclass
+class StudyGuide:
+    """供研究生学习面板：命中节（LLM 复核保留）+ 相关推荐节（跨章，附内容简介）。"""
+    matched: list[StudySection] = field(default_factory=list)
+    recommended: list[StudySection] = field(default_factory=list)
+
+
+@dataclass
 class AnswerResult:
-    """最终答案：核验句 + 出处目录；拒答时 sentences 为空且 refused=True。"""
+    """最终答案：核验句 + 出处目录 + 用量统计 + 学习指引；拒答时 sentences 为空且 refused=True。"""
     sentences: list[VerifiedSentence]
     sources: list[SourceRef]
     refused: bool = False
     retries: int = 0
     searched: list[str] = field(default_factory=list)
     message: str = ""
+    stats: dict = field(default_factory=dict)   # 本次回答的 token 与模型调用次数
+    study: StudyGuide | None = None             # 供研究生学习指引（拒答时为 None）
 
 
 @dataclass

@@ -23,21 +23,63 @@ from toolbook.vector_index import build_vector_index
 st.set_page_config(page_title="ToolBook-Paper Agent", layout="wide")
 
 
+def render_stats(stats: dict):
+    """渲染本次回答的用量统计：token 消耗 + 模型调用次数（本地重排不计费）。"""
+    if not stats:
+        return
+    total = stats.get("total_tokens", 0)
+    pt = stats.get("prompt_tokens", 0)
+    ct = stats.get("completion_tokens", 0)
+    chat = stats.get("chat_calls", 0)
+    emb = stats.get("embed_calls", 0)
+    st.caption(f"本次消耗 {total} tokens（输入 {pt} / 输出 {ct}）· "
+               f"模型调用 {chat + emb} 次（对话 {chat} / 向量化 {emb}）· 重排本地不计费")
+
+
+def render_study(g):
+    """渲染「供研究生学习」面板：命中节在前，[相关推荐] 跨章节在后（附内容简介）。"""
+    if not g or (not g.matched and not g.recommended):
+        return
+    with st.expander("📚 供研究生学习", expanded=True):
+        if g.matched:
+            st.markdown("**命中章节**（建议系统学习）")
+            for s in g.matched:
+                mark = "" if s.source == "original" else " [系统编号]"
+                title = s.title.removeprefix(s.number).strip() or s.title
+                st.markdown(f"- {s.number} {title}（{s.locator}）《{s.doc_title}》{mark}")
+        if g.recommended:
+            st.markdown("**相关推荐**")
+            for s in g.recommended:
+                mark = "" if s.source == "original" else " [系统编号]"
+                title = s.title.removeprefix(s.number).strip() or s.title
+                summary = f"：{s.summary}" if s.summary else ""
+                st.markdown(f"- [相关推荐] {s.number} {title}（{s.locator}）{summary}{mark}")
+
+
 def render_answer(r: AnswerResult):
-    """渲染一条答案：逐句核验徽章 + 出处目录（拒答时显示原因与已尝试查询）。"""
+    """渲染一条答案：节号→页码置顶 + 无徽章核验句 + 学习指引 + 出处目录 + 用量统计。"""
     if r.refused:
         st.warning(r.message)
         st.caption(f"已尝试查询：{r.searched}（重试 {r.retries} 次）")
+        render_stats(r.stats)
         return
+    # 出处节号 → 页码（置顶，节号在前页码在后；只列被句子引用的出处）
+    cited = sorted({s.ref for s in r.sentences if 0 <= s.ref < len(r.sources)})
+    head = "、".join(f"{r.sources[i].number} 节（{r.sources[i].locator}）" for i in cited)
+    if head:
+        st.markdown(f"**出处节号 → 页码**：{head}")
+    # 核验句：去掉机械/LLM 徽章前缀（核验仍在内部完成），保留引用角标
     for s in r.sentences:
-        badge = "机械✓" if s.badge == "mechanical" else "LLM✓"
-        color = "green" if s.badge == "mechanical" else "blue"
-        st.markdown(f":{color}[**[{badge}]**] {s.text} `[{s.ref}]`")
+        st.markdown(f"{s.text} `[{s.ref}]`")
+    # 供研究生学习指引（命中节 + 相关推荐）
+    render_study(r.study)
+    # 完整出处目录（保留系统编号标记）
     with st.expander(f"出处目录（{len(r.sources)} 条，重试 {r.retries} 次）"):
         for i, src in enumerate(r.sources):
             mark = "" if src.source == "original" else " **[系统编号]**"
             title = src.title.removeprefix(src.number).strip() or src.title
             st.markdown(f"[{i}] 《{src.doc_title}》 {src.number} {title}{mark}（{src.locator}）")
+    render_stats(r.stats)
 
 
 def answer_gist(r: AnswerResult) -> str:
@@ -120,7 +162,7 @@ store.close()
 # ---------- 主区：两个问答页签 ----------
 tab_a, tab_b = st.tabs(["资源库问答（模块A）", "论文问答（模块B）"])
 with tab_a:
-    st.caption("答案只返回核验通过的内容：机械✓=原文摘录子串匹配，LLM✓=逐句裁判+原文双锚定。上下文记忆：自动保留最近 5 轮。")
+    st.caption("答案只返回核验通过的内容（摘录机械子串匹配 / 归纳逐句裁判+原文双锚定，核验在内部完成）。上下文记忆：自动保留最近 5 轮。")
     conv_a = st.session_state.setdefault("conv_a", Conversation(max_turns=5))
     if st.button("清空对话", key="clear_a"):
         conv_a.clear()

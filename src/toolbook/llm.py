@@ -13,6 +13,31 @@ from . import config
 
 _client = None
 
+# 本次回答的用量累计（ask 开始清零、结束快照）；所有云端调用都经此累加
+_usage = {"chat_calls": 0, "embed_calls": 0,
+          "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+
+def reset_usage():
+    """清零用量累计：每次 ask 开始时调用，使统计仅覆盖本次回答。"""
+    for k in _usage:
+        _usage[k] = 0
+
+
+def snapshot_usage() -> dict:
+    """返回用量累计的副本：ask 结束时挂到答案，供 UI 展示 token 与调用次数。"""
+    return dict(_usage)
+
+
+def _record_usage(resp, kind: str):
+    """累加一次云端调用的 token 与次数；resp.usage 缺失时只计次数。"""
+    _usage["chat_calls" if kind == "chat" else "embed_calls"] += 1
+    u = getattr(resp, "usage", None)
+    if u is not None:
+        _usage["prompt_tokens"] += getattr(u, "prompt_tokens", 0) or 0
+        _usage["completion_tokens"] += getattr(u, "completion_tokens", 0) or 0
+        _usage["total_tokens"] += getattr(u, "total_tokens", 0) or 0
+
 
 def _make_http_client() -> httpx.Client:
     """构造 httpx 客户端；临时剔除 NO_PROXY 中的 IPv6 条目（httpx 解析 [::1] 会崩）。"""
@@ -48,6 +73,7 @@ def embed_texts(texts: list[str], batch_size: int = 32) -> list[list[float]]:
     for i in range(0, len(texts), batch_size):
         resp = get_client().embeddings.create(
             model=config.EMBED_MODEL, input=texts[i:i + batch_size])
+        _record_usage(resp, "embed")
         out.extend(d.embedding for d in resp.data)
     return out
 
@@ -58,6 +84,7 @@ def chat(prompt: str, system: str = "", model: str | None = None) -> str:
     msgs.append({"role": "user", "content": prompt})
     resp = get_client().chat.completions.create(
         model=model or config.CHAT_MODEL, messages=msgs, temperature=0)
+    _record_usage(resp, "chat")
     return resp.choices[0].message.content or ""
 
 
@@ -65,6 +92,8 @@ def rewrite_query(question: str) -> dict:
     """LLM 把问题改写为中英双语关键词（BM25 跨语言用）；任何失败回退原问题。"""
     system = "你是检索查询改写器。把用户问题改写为适合关键词检索的中英双语关键词，只输出JSON，不要解释。"
     prompt = (f"问题：{question}\n"
+              "若问题含公式/方程/符号（如 式(14)、LMMSE、SNR 表达式），先识别其对应的知识点概念，"
+              "用概念术语而非符号本身作为关键词。\n"
               '输出格式：{"zh": "中文关键词 空格分隔", "en": "english keywords space separated"}')
     try:
         raw = chat(prompt, system)
@@ -109,6 +138,8 @@ def contextualize_query(question: str, paper_context: str) -> str:
     prompt = (f"提问背景（论文摘要与对话历史，仅供理解问题）：\n{paper_context[:1500]}\n\n用户问题：{question}\n"
               "请把问题改写为适合在教材资源库中检索的关键词（中英混合、空格分隔），"
               "结合背景补全指代与省略，突出基础知识点术语，直接输出关键词串，不要解释。\n"
+              "若问题含公式/方程/符号（如 式(14)、LMMSE 估计式），先识别其对应的知识点概念，"
+              "用概念术语（中英）作为关键词，定位教材中定义或推导该公式的章节，不要只检索符号本身。\n"
               "若对话历史非空且当前问题是追问（含'它/那/这个/呢'等指代或省略），"
               "必须先从最近一轮历史确定被追问的主题，把该主题核心术语放在关键词最前面，"
               "不要改用论文中其他未讨论的主题。")

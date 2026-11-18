@@ -10,6 +10,7 @@ from . import config, llm
 from .answering import generate_draft
 from .models import AnswerResult, SourceRef
 from .retrieval import hybrid_search
+from .study import build_study_guide
 from .verify import verify_draft
 
 MAX_RETRIES = 2
@@ -102,7 +103,11 @@ def build_graph():
 
 def ask(question: str, db_path=config.DEFAULT_DB, use_rerank: bool = True,
         paper=None, history_context: str = "") -> AnswerResult:
-    """问答主入口（模块A/B 共用）：paper/history_context 提供背景时先做上下文化改写。"""
+    """问答主入口（模块A/B 共用）：paper/history_context 提供背景时先做上下文化改写。
+
+    回答附带本次用量统计；非拒答时附「供研究生学习」指引（命中节复核 + 跨章推荐）。
+    """
+    llm.reset_usage()  # 本次回答的 token/调用次数从零累计
     ctx_parts = []
     if paper is not None:
         ctx_parts.append(paper.context())
@@ -116,4 +121,9 @@ def ask(question: str, db_path=config.DEFAULT_DB, use_rerank: bool = True,
                           "history_context": history_context,
                           "db_path": db_path, "use_rerank": use_rerank,
                           "retries": 0, "searched": []})
-    return final["result"]
+    result = final["result"]
+    # 非拒答才构建学习指引（用最终命中节）；拒答不给推荐，宁缺勿错
+    if not result.refused:
+        result.study = build_study_guide(question, final.get("hits", []), db_path)
+    result.stats = llm.snapshot_usage()
+    return result

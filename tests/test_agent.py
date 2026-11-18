@@ -13,10 +13,11 @@ def _hit():
 
 @pytest.fixture
 def patch_nodes(monkeypatch):
-    # 默认假节点：检索返回 1 个 hit，生成 1 句草稿，替代查询可预测
+    # 默认假节点：检索返回 1 个 hit，生成 1 句草稿，替代查询可预测，学习指引桩为空
     monkeypatch.setattr(ag, "hybrid_search", lambda q, **k: [_hit()])
     monkeypatch.setattr(ag, "generate_draft", lambda q, hits, ctx="", hist="": [{"text": "原文内容", "type": "excerpt", "ref": 0}])
     monkeypatch.setattr(ag.llm, "alternative_query", lambda q, tried: f"替代查询{len(tried)}")
+    monkeypatch.setattr(ag, "build_study_guide", lambda *a, **k: None)
     return monkeypatch
 
 
@@ -124,3 +125,46 @@ def test_ask_with_history_context(patch_nodes):
     assert "采样定理" in seen["bg"] and "fs>2B" in seen["bg"]
     assert seen["queries"][0] == "关键词"
     assert "采样定理" in seen["hist"]
+
+
+def test_ask_resets_usage_at_start(patch_nodes):
+    # ask 开始清零用量，使统计仅覆盖本次回答
+    calls = {"reset": 0}
+    patch_nodes.setattr(ag.llm, "reset_usage", lambda: calls.__setitem__("reset", calls["reset"] + 1))
+    patch_nodes.setattr(ag, "verify_draft", lambda d, h: [VerifiedSentence("原文内容", "excerpt", 0, "mechanical", "原文内容")])
+    ag.ask("采样定理？")
+    assert calls["reset"] == 1
+
+
+def test_ask_attaches_stats(patch_nodes):
+    # ask 结束把用量快照挂到答案 stats
+    patch_nodes.setattr(ag.llm, "snapshot_usage", lambda: {"chat_calls": 3, "total_tokens": 99})
+    patch_nodes.setattr(ag, "verify_draft", lambda d, h: [VerifiedSentence("原文内容", "excerpt", 0, "mechanical", "原文内容")])
+    r = ag.ask("采样定理？")
+    assert r.stats == {"chat_calls": 3, "total_tokens": 99}
+
+
+def test_ask_attaches_study_when_answered(patch_nodes):
+    # 非拒答：用最终命中节构建学习指引并挂到答案，问题与命中节正确传入
+    from toolbook.models import StudyGuide, StudySection
+    guide = StudyGuide([StudySection("书", "3.1", "采样", "p21", "original")], [])
+    seen = {}
+
+    def fake_study(q, hits, db_path=None):
+        seen["q"], seen["hits"] = q, hits
+        return guide
+
+    patch_nodes.setattr(ag, "build_study_guide", fake_study)
+    patch_nodes.setattr(ag, "verify_draft", lambda d, h: [VerifiedSentence("原文内容", "excerpt", 0, "mechanical", "原文内容")])
+    r = ag.ask("采样定理？")
+    assert r.study is guide
+    assert seen["q"] == "采样定理？" and len(seen["hits"]) == 1
+
+
+def test_ask_no_study_when_refused(patch_nodes):
+    # 拒答：不构建学习指引，study 为 None
+    patch_nodes.setattr(ag, "verify_draft", lambda d, h: [])
+    called = {"study": 0}
+    patch_nodes.setattr(ag, "build_study_guide", lambda *a, **k: called.__setitem__("study", called["study"] + 1))
+    r = ag.ask("超纲问题？")
+    assert r.refused and r.study is None and called["study"] == 0
