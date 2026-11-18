@@ -24,6 +24,8 @@ def cn2num(s: str) -> int:
 
 
 _NUM_PATTERNS = [
+    (re.compile(r"^第\s*([0-9一二三四五六七八九十百零]+)\s*部分"),
+     lambda m: "P" + str(cn2num(m.group(1)))),
     (re.compile(r"^第\s*([0-9一二三四五六七八九十百零]+)\s*[章节節編编篇]"),
      lambda m: str(cn2num(m.group(1)))),
     (re.compile(r"^(?:chapter|section)\s+(\d+(?:\.\d+)*)", re.I),
@@ -90,7 +92,7 @@ def build_tree(blocks: list[Block], doc_title: str = "") -> list[SectionNode]:
         else:
             key = stack[-1].number if stack else ""
             counters[key] = counters.get(key, 0) + 1
-            num = f"{key}.{counters[key]}" if key else str(counters[key])
+            num = f"{key}.S{counters[key]}" if key else f"S{counters[key]}"
             source = "system"
         node = SectionNode(num, b.text, b.level, source, b.locator, "")
         (stack[-1].children if stack else roots).append(node)

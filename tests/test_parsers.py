@@ -91,6 +91,37 @@ def test_pdf_font_fallback_without_toc(tmp_path):
     assert heads and heads[0].text == "Chapter One"
 
 
+def test_pdf_toc_driven_with_wrapped_title(tmp_path):
+    import pymupdf
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "第一章 绪论", fontname="china-s", fontsize=22)
+    page.insert_text((72, 110), "这是绪论正文。", fontname="china-s", fontsize=11)
+    page.insert_text((72, 150), "第二章 复数、相位与复基带：", fontname="china-s", fontsize=22)
+    page.insert_text((72, 176), "为什么信号要写成复数", fontname="china-s", fontsize=22)
+    page.insert_text((72, 214), "这是第二章正文。", fontname="china-s", fontsize=11)
+    page.insert_text((72, 250), "2.1 复数坐标", fontname="china-s", fontsize=16)
+    page.insert_text((72, 280), "这是小节正文。", fontname="china-s", fontsize=11)
+    doc.set_toc([
+        [1, "第一章 绪论", 1],
+        [1, "第二章 复数、相位与复基带：为什么信号要写成复数", 1],
+        [2, "2.1 复数坐标", 1],
+    ])
+    p = tmp_path / "wrapped.pdf"
+    doc.save(str(p))
+    doc.close()
+    parsed = PyMuPDFParser().parse(p)
+    heads = [b for b in parsed.blocks if b.kind == "heading"]
+    assert [(b.text, b.level) for b in heads] == [
+        ("第一章 绪论", 1),
+        ("第二章 复数、相位与复基带：为什么信号要写成复数", 1),
+        ("2.1 复数坐标", 2),
+    ]
+    paras = [b.text for b in parsed.blocks if b.kind == "paragraph"]
+    assert "这是第二章正文。" in paras
+    assert "为什么信号要写成复数" not in paras
+
+
 def test_get_parser_registry(docx_file, epub_file, pdf_file, tmp_path):
     assert isinstance(get_parser(docx_file), DocxParser)
     assert isinstance(get_parser(epub_file), EpubParser)

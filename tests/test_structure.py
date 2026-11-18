@@ -32,9 +32,23 @@ def test_numbered_headings_original():
 
 def test_unnumbered_headings_system():
     tree = build_tree([h("绪论", 1), h("信号", 2), h("系统", 2), h("变换", 1)])
-    assert [n.number for n in tree] == ["1", "2"]
-    assert [c.number for c in tree[0].children] == ["1.1", "1.2"]
+    assert [n.number for n in tree] == ["S1", "S2"]
+    assert [c.number for c in tree[0].children] == ["S1.S1", "S1.S2"]
     assert all(n.source == "system" for n in iter_nodes(tree))
+
+
+def test_system_number_avoids_collision_with_original():
+    tree = build_tree([h("第1章 绪论", 1), h("1.1 信号", 2), h("本章自测", 2)])
+    nums = [c.number for c in tree[0].children]
+    assert nums == ["1.1", "1.S1"]
+
+
+def test_part_numbering():
+    assert extract_number("第一部分 建立共同语言") == "P1"
+    tree = build_tree([h("第一部分 基础", 1), h("第一章 绪论", 2), h("1.1 信号", 3)])
+    assert tree[0].number == "P1"
+    assert tree[0].children[0].number == "1"
+    assert tree[0].children[0].children[0].number == "1.1"
 
 
 def test_no_headings_promotes_numbered_paragraphs():
