@@ -88,7 +88,12 @@ def test_ask_with_paper_contextualizes_query(patch_nodes):
 def test_ask_without_paper_unchanged(patch_nodes):
     # 不带论文：初始查询仍是原问题（M3 行为不变）
     seen = {}
-    patch_nodes.setattr(ag, "hybrid_search", lambda q, **k: seen.setdefault("q", q) or [_hit()])
+
+    def fake_search(q, **k):
+        seen["q"] = q
+        return [_hit()]
+
+    patch_nodes.setattr(ag, "hybrid_search", fake_search)
     patch_nodes.setattr(ag, "verify_draft", lambda draft, hits: [VerifiedSentence("原文内容", "excerpt", 0, "mechanical", "原文内容")])
     r = ag.ask("采样定理？")
     assert not r.refused and seen["q"] == "采样定理？"
