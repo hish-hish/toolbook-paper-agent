@@ -46,3 +46,19 @@ def test_alternative_query_fallback(monkeypatch):
     assert llm.alternative_query("原问题", ["原问题"]) == "原问题"
     monkeypatch.setattr(llm, "chat", lambda *a, **k: " 新关键词 串 ")
     assert llm.alternative_query("原问题", ["原问题"]) == "新关键词 串"
+
+
+def test_generate_draft_with_paper_context(monkeypatch):
+    # 论文背景进入提示词但明确"不作为答案依据"；资料块仍是唯一答案来源
+    captured = {}
+
+    def fake_chat(prompt, system="", model=None):
+        captured["prompt"] = prompt
+        return '{"insufficient": false, "sentences": [{"text": "采样频率必须大于最高频率的两倍。", "type": "excerpt", "ref": 0}]}'
+
+    monkeypatch.setattr(aw.llm, "chat", fake_chat)
+    draft = aw.generate_draft("采样定理？", [_hit()], paper_context="论文《CORE》\n摘要：sensing")
+    assert draft[0]["ref"] == 0
+    assert "提问背景" in captured["prompt"] and "CORE" in captured["prompt"]
+    assert "不作为答案依据" in captured["prompt"]
+    assert "[0]" in captured["prompt"]  # 编号资料块仍在

@@ -34,3 +34,25 @@ def test_embed_texts_batches(monkeypatch):
     vecs = llm.embed_texts(["a", "bb", "ccc", "dddd", "eeeee"], batch_size=2)
     assert calls == [2, 2, 1]
     assert [v[0] for v in vecs] == [1.0, 2.0, 3.0, 4.0, 5.0]
+
+
+def test_contextualize_query_success(monkeypatch):
+    # 论文上下文改写：提示词含论文背景与问题，输出关键词串
+    captured = {}
+
+    def fake_chat(prompt, system="", model=None):
+        captured["prompt"] = prompt
+        return " 双极化 polarization 协方差 covariance "
+
+    monkeypatch.setattr(llm, "chat", fake_chat)
+    out = llm.contextualize_query("这个接收机为什么用双极化？", "论文《CORE》\n摘要：dual-polarized")
+    assert out == "双极化 polarization 协方差 covariance"
+    assert "CORE" in captured["prompt"] and "双极化" in captured["prompt"]
+
+
+def test_contextualize_query_fallback(monkeypatch):
+    # 调用失败回退原问题，不阻断检索
+    def boom(*a, **k):
+        raise RuntimeError("offline")
+    monkeypatch.setattr(llm, "chat", boom)
+    assert llm.contextualize_query("原问题", "背景") == "原问题"

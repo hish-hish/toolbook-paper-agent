@@ -102,3 +102,15 @@ def propose_titles(text: str) -> list[str]:
         return [t for t in titles if isinstance(t, str) and 0 < len(t) <= 60 and t in text]
     except Exception:
         return []
+
+
+def contextualize_query(question: str, paper_context: str) -> str:
+    """模块B 查询上下文化：结合论文背景把问题展开为资源库检索关键词；失败回退原问题。"""
+    prompt = (f"用户正在阅读的论文背景：\n{paper_context[:1500]}\n\n用户问题：{question}\n"
+              "请把问题改写为适合在教材资源库中检索的关键词（中英混合、空格分隔），"
+              "突出论文涉及的基础知识点术语，直接输出关键词串，不要解释。")
+    try:
+        out = chat(prompt).strip()
+        return out or question
+    except Exception:
+        return question
