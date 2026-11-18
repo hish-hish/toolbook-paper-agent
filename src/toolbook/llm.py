@@ -74,3 +74,14 @@ def rewrite_query(question: str) -> dict:
     except Exception:
         # 断网/无密钥/格式异常都不阻断检索：回退原问题
         return {"zh": question, "en": ""}
+
+
+def alternative_query(question: str, tried: list[str]) -> str:
+    """重检索替代查询：让 LLM 换一组不同的关键词；失败回退原问题。"""
+    prompt = (f"原问题：{question}\n已尝试过的查询：{tried}\n"
+              "请给出一组与上述都不同的检索关键词（中英混合、空格分隔），直接输出关键词串，不要解释。")
+    try:
+        out = chat(prompt).strip()
+        return out or question
+    except Exception:
+        return question
