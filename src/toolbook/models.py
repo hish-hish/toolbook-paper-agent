@@ -66,3 +66,16 @@ class AnswerResult:
     retries: int = 0
     searched: list[str] = field(default_factory=list)
     message: str = ""
+
+
+@dataclass
+class PaperInfo:
+    """模块B 论文上下文：标题 + 书签目录 + 摘要 + 页数；论文不入资源库。"""
+    title: str
+    outline: list[dict]  # [{"level", "title", "page"}]
+    abstract: str
+    n_pages: int
+
+    def context(self) -> str:
+        """供 LLM 的提问背景文本：标题 + 摘要（截断 1500 字）。"""
+        return f"论文《{self.title}》\n摘要：{self.abstract}"[:1500]
