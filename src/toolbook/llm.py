@@ -114,3 +114,10 @@ def contextualize_query(question: str, paper_context: str) -> str:
         return out or question
     except Exception:
         return question
+
+
+def summarize_turns(turns_text: str) -> str:
+    """把旧问答轮次压缩成要点（保留知识点与结论）；失败抛异常由调用方回退。"""
+    prompt = (f"以下是用户与资源库的历史问答：\n{turns_text[:3000]}\n\n"
+              "请压缩成不超过200字的要点，保留讨论过的知识点与结论，直接输出要点。")
+    return chat(prompt).strip()

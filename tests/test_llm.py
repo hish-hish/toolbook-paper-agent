@@ -56,3 +56,9 @@ def test_contextualize_query_fallback(monkeypatch):
         raise RuntimeError("offline")
     monkeypatch.setattr(llm, "chat", boom)
     assert llm.contextualize_query("原问题", "背景") == "原问题"
+
+
+def test_summarize_turns(monkeypatch):
+    # 压缩摘要：去首尾空白直接返回
+    monkeypatch.setattr(llm, "chat", lambda *a, **k: " 摘要 ")
+    assert llm.summarize_turns("问: x\n答: y") == "摘要"
