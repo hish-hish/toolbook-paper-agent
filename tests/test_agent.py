@@ -15,7 +15,7 @@ def _hit():
 def patch_nodes(monkeypatch):
     # 默认假节点：检索返回 1 个 hit，生成 1 句草稿，替代查询可预测
     monkeypatch.setattr(ag, "hybrid_search", lambda q, **k: [_hit()])
-    monkeypatch.setattr(ag, "generate_draft", lambda q, hits, ctx="": [{"text": "原文内容", "type": "excerpt", "ref": 0}])
+    monkeypatch.setattr(ag, "generate_draft", lambda q, hits, ctx="", hist="": [{"text": "原文内容", "type": "excerpt", "ref": 0}])
     monkeypatch.setattr(ag.llm, "alternative_query", lambda q, tried: f"替代查询{len(tried)}")
     return monkeypatch
 
@@ -70,7 +70,7 @@ def test_ask_with_paper_contextualizes_query(patch_nodes):
         seen.setdefault("queries", []).append(q)
         return [_hit()]
 
-    def fake_gen(q, hits, ctx=""):
+    def fake_gen(q, hits, ctx="", hist=""):
         seen["ctx"] = ctx
         return [{"text": "原文内容", "type": "excerpt", "ref": 0}]
 
@@ -97,3 +97,30 @@ def test_ask_without_paper_unchanged(patch_nodes):
     patch_nodes.setattr(ag, "verify_draft", lambda draft, hits: [VerifiedSentence("原文内容", "excerpt", 0, "mechanical", "原文内容")])
     r = ag.ask("采样定理？")
     assert not r.refused and seen["q"] == "采样定理？"
+
+
+def test_ask_with_history_context(patch_nodes):
+    # 带历史提问：合并背景进改写、历史进生成节点
+    seen = {}
+
+    def fake_search(q, **k):
+        seen.setdefault("queries", []).append(q)
+        return [_hit()]
+
+    def fake_gen(q, hits, ctx="", hist=""):
+        seen["hist"] = hist
+        return [{"text": "原文内容", "type": "excerpt", "ref": 0}]
+
+    def fake_ctx(q, bg):
+        seen["bg"] = bg
+        return "关键词"
+
+    patch_nodes.setattr(ag, "hybrid_search", fake_search)
+    patch_nodes.setattr(ag, "generate_draft", fake_gen)
+    patch_nodes.setattr(ag.llm, "contextualize_query", fake_ctx)
+    patch_nodes.setattr(ag, "verify_draft", lambda d, h: [VerifiedSentence("原文内容", "excerpt", 0, "mechanical", "原文内容")])
+    r = ag.ask("复基带情形呢？", history_context="问: 采样定理说了什么？\n答: fs>2B")
+    assert not r.refused
+    assert "采样定理" in seen["bg"] and "fs>2B" in seen["bg"]
+    assert seen["queries"][0] == "关键词"
+    assert "采样定理" in seen["hist"]

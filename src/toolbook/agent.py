@@ -20,6 +20,7 @@ class AgentState(TypedDict, total=False):
     question: str
     query: str
     paper_context: str
+    history_context: str
     db_path: object
     use_rerank: bool
     hits: list
@@ -38,9 +39,10 @@ def retrieve_node(state: AgentState) -> dict:
 
 
 def generate_node(state: AgentState) -> dict:
-    """生成节点：LLM 基于检索父块写逐句带引用的草稿（可带论文提问背景）。"""
+    """生成节点：LLM 基于检索父块写逐句带引用的草稿（可带论文与对话历史背景）。"""
     return {"draft": generate_draft(state["question"], state["hits"],
-                                    state.get("paper_context", ""))}
+                                    state.get("paper_context", ""),
+                                    state.get("history_context", ""))}
 
 
 def verify_node(state: AgentState) -> dict:
@@ -99,15 +101,19 @@ def build_graph():
 
 
 def ask(question: str, db_path=config.DEFAULT_DB, use_rerank: bool = True,
-        paper=None) -> AnswerResult:
-    """问答主入口（模块A/B 共用）：paper 为 PaperInfo 时先做论文上下文查询改写。"""
-    query, ctx = question, ""
+        paper=None, history_context: str = "") -> AnswerResult:
+    """问答主入口（模块A/B 共用）：paper/history_context 提供背景时先做上下文化改写。"""
+    ctx_parts = []
     if paper is not None:
-        ctx = paper.context()
-        query = llm.contextualize_query(question, ctx)
+        ctx_parts.append(paper.context())
+    if history_context:
+        ctx_parts.append(history_context)
+    background = "\n\n".join(ctx_parts)
+    query = llm.contextualize_query(question, background) if background else question
     graph = build_graph()
     final = graph.invoke({"question": question, "query": query,
-                          "paper_context": ctx,
+                          "paper_context": paper.context() if paper is not None else "",
+                          "history_context": history_context,
                           "db_path": db_path, "use_rerank": use_rerank,
                           "retries": 0, "searched": []})
     return final["result"]

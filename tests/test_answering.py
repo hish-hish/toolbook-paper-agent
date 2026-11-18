@@ -62,3 +62,18 @@ def test_generate_draft_with_paper_context(monkeypatch):
     assert "提问背景" in captured["prompt"] and "CORE" in captured["prompt"]
     assert "不作为答案依据" in captured["prompt"]
     assert "[0]" in captured["prompt"]  # 编号资料块仍在
+
+
+def test_generate_draft_with_history(monkeypatch):
+    # 对话历史进入提示词且明确"不作为答案依据"
+    captured = {}
+
+    def fake_chat(prompt, system="", model=None):
+        captured["prompt"] = prompt
+        return '{"insufficient": false, "sentences": [{"text": "采样频率必须大于最高频率的两倍。", "type": "excerpt", "ref": 0}]}'
+
+    monkeypatch.setattr(aw.llm, "chat", fake_chat)
+    aw.generate_draft("复基带情形呢？", [_hit()],
+                      history_context="问: 采样定理说了什么？\n答: fs>2B")
+    assert "对话历史" in captured["prompt"] and "fs>2B" in captured["prompt"]
+    assert "不作为答案依据" in captured["prompt"]
