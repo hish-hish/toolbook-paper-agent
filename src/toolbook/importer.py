@@ -1,3 +1,4 @@
+"""导入流水线：文件哈希幂等 → 解析 → 章节树（可选 LLM 兜底）→ 父子块入库。"""
 import hashlib
 from pathlib import Path
 
@@ -10,7 +11,12 @@ from .store import LibraryStore
 from .structure import build_tree
 
 
-def import_file(path, db_path=DEFAULT_DB, parser: Parser | None = None) -> ImportResult:
+def import_file(path, db_path=DEFAULT_DB, parser: Parser | None = None,
+                llm_fallback: bool = True) -> ImportResult:
+    """导入一本书：哈希去重 → 解析 → 建章节树 → 单事务入库。
+
+    llm_fallback 控制无结构文档是否走 LLM 兜底章节识别（D5）。
+    """
     path = Path(path)
     file_hash = hashlib.sha256(path.read_bytes()).hexdigest()
     store = LibraryStore(db_path)
@@ -20,7 +26,12 @@ def import_file(path, db_path=DEFAULT_DB, parser: Parser | None = None) -> Impor
             return ImportResult(existing["doc_id"], existing["title"],
                                 existing["format"], skipped=True)
         parsed = (parser or get_parser(path)).parse(path)
-        tree = build_tree(parsed.blocks, doc_title=parsed.title)
+        # 无结构文档的 LLM 兜底：以模块引用传入，便于离线测试打桩
+        proposer = None
+        if llm_fallback:
+            from . import llm
+            proposer = llm.propose_titles
+        tree = build_tree(parsed.blocks, doc_title=parsed.title, title_proposer=proposer)
         fmt = path.suffix.lstrip(".").lower()
         n_sec = n_chunk = 0
         with store.transaction():

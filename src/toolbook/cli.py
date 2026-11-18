@@ -14,6 +14,7 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     p_imp = sub.add_parser("import", help="导入 docx/epub/pdf")
     p_imp.add_argument("files", nargs="+")
+    p_imp.add_argument("--no-llm-fallback", action="store_true", help="禁用无结构文档的 LLM 兜底")
     sub.add_parser("list", help="列出已导入文档")
     p_tree = sub.add_parser("tree", help="显示章节树")
     p_tree.add_argument("doc_id", type=int)
@@ -33,7 +34,7 @@ def main(argv=None):
 
     if args.cmd == "import":
         for f in args.files:
-            r = import_file(f, args.db)
+            r = import_file(f, args.db, llm_fallback=not args.no_llm_fallback)
             if r.skipped:
                 print(f"[跳过] 《{r.title}》已导入（doc_id={r.doc_id}，哈希相同）")
             else:

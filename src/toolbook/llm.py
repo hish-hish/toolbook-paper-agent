@@ -85,3 +85,20 @@ def alternative_query(question: str, tried: list[str]) -> str:
         return out or question
     except Exception:
         return question
+
+
+def propose_titles(text: str) -> list[str]:
+    """LLM 兜底章节识别（D5）：为无结构文本提议章节标题。
+
+    防编造：只保留原文中一字不差出现且 ≤60 字的标题；任何失败返回空列表。
+    """
+    prompt = (f"以下是一本书的正文片段：\n{text[:3000]}\n\n"
+              "请提议 3–10 个章节标题，每个标题必须是原文中一字不差出现的连续片段（不超过60字）。"
+              '只输出JSON数组，如 ["标题一", "标题二"]。')
+    try:
+        raw = chat(prompt, "你是章节结构识别器。只输出JSON数组，不要解释。")
+        m = re.search(r"\[.*\]", raw, re.S)
+        titles = json.loads(m.group(0))
+        return [t for t in titles if isinstance(t, str) and 0 < len(t) <= 60 and t in text]
+    except Exception:
+        return []

@@ -1,3 +1,4 @@
+"""章节树构建：规则优先提取编号标题，无结构时可选 LLM 兜底切分（系统编号）。"""
 import re
 from collections.abc import Iterator
 
@@ -71,7 +72,11 @@ def _promote_numbered_paragraphs(blocks: list[Block]) -> list[Block]:
     return out if promoted >= 2 else blocks
 
 
-def build_tree(blocks: list[Block], doc_title: str = "") -> list[SectionNode]:
+def build_tree(blocks: list[Block], doc_title: str = "", title_proposer=None) -> list[SectionNode]:
+    """由解析块建章节树：编号标题→原书编号；无编号标题→S 前缀系统编号。
+
+    完全无结构时：有 title_proposer 则走 LLM 兜底切分（D5），否则单节兜底。
+    """
     blocks = _promote_numbered_paragraphs(blocks)
     roots: list[SectionNode] = []
     stack: list[SectionNode] = []
@@ -99,10 +104,48 @@ def build_tree(blocks: list[Block], doc_title: str = "") -> list[SectionNode]:
         stack.append(node)
     if not roots:
         text = "\n".join(b.text for b in blocks)
+        # LLM 兜底（D5）：提议标题并按位置切分；失败回退单节
+        if title_proposer is not None:
+            nodes = _llm_fallback_nodes(blocks, text, title_proposer)
+            if nodes:
+                return nodes
         roots = [SectionNode("1", doc_title or "全文", 1, "system", "", text)]
     elif preamble:
         roots.insert(0, SectionNode("0", "前言", 1, "system", "", "\n".join(preamble)))
     return roots
+
+
+def _llm_fallback_nodes(blocks: list[Block], text: str, proposer) -> list[SectionNode]:
+    """按 LLM 提议标题切分无结构文本：标题必须能在某个块中定位，至少 2 个才生效。"""
+    try:
+        titles = proposer(text)
+    except Exception:
+        return []
+    # 每个标题定位到首次出现的块索引
+    cuts = []
+    for t in titles:
+        for i, b in enumerate(blocks):
+            if t in b.text:
+                cuts.append((i, t))
+                break
+    cuts.sort(key=lambda x: x[0])
+    # 同块去重；不足 2 个切分点则兜底失败
+    uniq = []
+    for i, t in cuts:
+        if not uniq or uniq[-1][0] != i:
+            uniq.append((i, t))
+    if len(uniq) < 2:
+        return []
+    nodes = []
+    # 首个标题前的内容作为前言保留
+    if uniq[0][0] > 0:
+        pre = "\n".join(b.text for b in blocks[:uniq[0][0]])
+        nodes.append(SectionNode("0", "前言", 1, "system", blocks[0].locator, pre))
+    for k, (start, title) in enumerate(uniq):
+        end = uniq[k + 1][0] if k + 1 < len(uniq) else len(blocks)
+        body = "\n".join(b.text for b in blocks[start:end])
+        nodes.append(SectionNode(f"S{k + 1}", title, 1, "system", blocks[start].locator, body))
+    return nodes
 
 
 def iter_nodes(roots: list[SectionNode]) -> Iterator[SectionNode]:
