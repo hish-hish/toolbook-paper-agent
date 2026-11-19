@@ -77,3 +77,36 @@ def test_no_toc_paper(tmp_path):
     doc.close()
     info = parse_paper(path)
     assert info.outline == [] and info.title == "Plain Paper"
+
+
+def test_list_papers_sorted_newest_first(tmp_path):
+    # 论文列表按修改时间倒序（最新上传排最前），每行含文件名/大小/修改时间
+    import os
+    from toolbook.paper import list_papers
+    old = tmp_path / "old.pdf"
+    new = tmp_path / "new.pdf"
+    old.write_bytes(b"%PDF-1.4 old")
+    new.write_bytes(b"%PDF-1.4 newer content")
+    os.utime(old, (1000, 1000))
+    os.utime(new, (2000, 2000))
+    rows = list_papers(tmp_path)
+    assert [r["name"] for r in rows] == ["new.pdf", "old.pdf"]
+    assert rows[0]["mtime"] == 2000
+    assert rows[0]["size"] == new.stat().st_size
+
+
+def test_list_papers_missing_or_empty_dir(tmp_path):
+    # 目录不存在或为空时返回空列表，不报错（UI 显示"请先上传"）
+    from toolbook.paper import list_papers
+    assert list_papers(tmp_path / "nope") == []
+    assert list_papers(tmp_path) == []
+
+
+def test_list_papers_ignores_non_pdf(tmp_path):
+    # 只列 PDF：忽略其它文件与子目录
+    from toolbook.paper import list_papers
+    (tmp_path / "a.pdf").write_bytes(b"%PDF-1.4")
+    (tmp_path / "note.txt").write_text("x")
+    (tmp_path / "sub").mkdir()
+    rows = list_papers(tmp_path)
+    assert [r["name"] for r in rows] == ["a.pdf"]

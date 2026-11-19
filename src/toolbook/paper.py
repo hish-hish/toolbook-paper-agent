@@ -71,3 +71,22 @@ def parse_paper(path) -> PaperInfo:
                          _extract_abstract(doc), len(doc))
     finally:
         doc.close()
+
+
+def list_papers(papers_dir) -> list[dict]:
+    """列出论文目录下所有 PDF（按修改时间倒序，最新上传在前），供 UI 论文列表按行展示。
+
+    只读文件元信息（文件名/字节大小/修改时间），不解析内容，保证列表秒开；
+    目录不存在或无 PDF 时返回空列表。点进某篇时才调 parse_paper 懒解析。
+    """
+    d = Path(papers_dir)
+    if not d.is_dir():
+        return []
+    rows = []
+    for f in d.iterdir():
+        # 只取 PDF 文件，忽略子目录与其它格式
+        if f.is_file() and f.suffix.lower() == ".pdf":
+            st = f.stat()
+            rows.append({"name": f.name, "size": st.st_size, "mtime": st.st_mtime})
+    rows.sort(key=lambda r: r["mtime"], reverse=True)
+    return rows

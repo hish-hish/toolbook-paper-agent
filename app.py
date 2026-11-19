@@ -4,6 +4,7 @@
 启动：uv run streamlit run app.py
 """
 import sys
+from datetime import datetime
 from pathlib import Path
 
 # 允许 streamlit 直接以脚本方式加载（把 src 加入模块搜索路径）
@@ -15,7 +16,7 @@ from toolbook import config
 from toolbook.agent import ask
 from toolbook.importer import import_file
 from toolbook.models import AnswerResult
-from toolbook.paper import parse_paper
+from toolbook.paper import list_papers, parse_paper
 from toolbook.session import Conversation
 from toolbook.store import LibraryStore
 from toolbook.vector_index import build_vector_index
@@ -160,7 +161,7 @@ if docs:
 store.close()
 
 # ---------- 主区：两个问答页签 ----------
-tab_a, tab_b = st.tabs(["资源库问答（模块A）", "论文问答（模块B）"])
+tab_a, tab_b = st.tabs(["知识点检索", "论文检索"])
 with tab_a:
     st.caption("答案只返回核验通过的内容（摘录机械子串匹配 / 归纳逐句裁判+原文双锚定，核验在内部完成）。上下文记忆：自动保留最近 5 轮。")
     conv_a = st.session_state.setdefault("conv_a", Conversation(max_turns=5))
@@ -170,40 +171,68 @@ with tab_a:
         st.rerun()
     chat_block("a", conv=conv_a)
 with tab_b:
-    st.caption("上传论文 PDF → 展示目录 → 就知识点提问，答案附本地资源库出处（论文本身不作答案依据）。")
-    paper_up = st.file_uploader("上传论文 PDF", type=["pdf"], key="paper_upload")
-    if paper_up is not None:
-        papers_dir = config.DATA_DIR / "papers"
-        papers_dir.mkdir(parents=True, exist_ok=True)
-        dest = papers_dir / paper_up.name
-        if not dest.exists():
-            dest.write_bytes(paper_up.getvalue())
-        # 同一文件只解析一次（会话状态保存论文上下文，即"等待提问"状态）
-        if st.session_state.get("paper_name") != paper_up.name:
-            st.session_state["paper"] = parse_paper(dest)
-            st.session_state["paper_name"] = paper_up.name
-    paper = st.session_state.get("paper")
-    if paper is not None:
-        st.success(f"已解析《{paper.title}》（{paper.n_pages} 页）")
-        if paper.outline:
-            with st.expander("论文目录", expanded=True):
-                st.dataframe(
-                    [{"层级": e["level"], "标题": e["title"], "页码": e["page"]}
-                     for e in paper.outline], hide_index=True)
+    st.caption("上传论文 PDF → 论文按行列表 → 点进某篇开始对话，答案附本地资源库出处（论文本身不作答案依据）。")
+    papers_dir = config.DATA_DIR / "papers"
+    papers_dir.mkdir(parents=True, exist_ok=True)
+    # 视图切换：b_active_paper 为空=列表视图，否则=该篇详情/对话视图
+    active = st.session_state.get("b_active_paper")
+
+    if active is None:
+        # ---------- 列表视图：多选上传 + 论文按行排列 ----------
+        ups = st.file_uploader("上传论文 PDF（可多选）", type=["pdf"],
+                               accept_multiple_files=True, key="paper_upload")
+        # 上传即存盘（同名不覆盖），随后扫目录列出；不在此解析，保证列表秒开
+        for up in ups:
+            dest = papers_dir / up.name
+            if not dest.exists():
+                dest.write_bytes(up.getvalue())
+        rows = list_papers(papers_dir)
+        if not rows:
+            st.info("还没有论文，请先上传 PDF")
         else:
-            st.info("该论文无目录书签，已按全文处理")
-        if paper.abstract:
-            with st.expander("摘要"):
-                st.write(paper.abstract)
-        # 每篇论文独立记忆与聊天记录：换论文不串上下文，新论文从空开始
-        convs = st.session_state.setdefault("convs_b", {})
-        conv = convs.setdefault(st.session_state["paper_name"],
-                                Conversation(max_turns=6, compress_threshold=6, keep_recent=3))
-        st.caption("每篇论文的对话记忆独立；超过 6 轮自动压缩旧轮；换论文不串上下文。")
-        if st.button("清空本论文对话", key="clear_b"):
-            conv.clear()
-            st.session_state[f"messages_b_{st.session_state['paper_name']}"] = []
-            st.rerun()
-        chat_block(f"b_{st.session_state['paper_name']}", paper=paper, conv=conv)
+            st.markdown(f"**论文列表（{len(rows)} 篇，最新上传在前）**")
+            for r in rows:
+                col_info, col_btn = st.columns([5, 1])
+                with col_info:
+                    mtime = datetime.fromtimestamp(r["mtime"]).strftime("%Y-%m-%d %H:%M")
+                    st.markdown(f"📄 **{r['name']}**  \n{r['size'] / 1024:.0f} KB · 上传于 {mtime}")
+                with col_btn:
+                    if st.button("进入对话 →", key=f"enter_{r['name']}"):
+                        st.session_state["b_active_paper"] = r["name"]
+                        st.rerun()
     else:
-        st.info("请先上传论文 PDF")
+        # ---------- 详情/对话视图：点进某篇后才懒解析 ----------
+        if st.button("← 返回论文列表", key="back_to_list"):
+            st.session_state["b_active_paper"] = None
+            st.rerun()
+        dest = papers_dir / active
+        if not dest.exists():
+            st.error("该论文文件已不存在，请返回列表")
+            st.session_state["b_active_paper"] = None
+        else:
+            # 按文件名缓存解析结果，来回切换不重复解析
+            cache = st.session_state.setdefault("paper_cache", {})
+            if active not in cache:
+                cache[active] = parse_paper(dest)
+            paper = cache[active]
+            st.success(f"已解析《{paper.title}》（{paper.n_pages} 页）")
+            if paper.outline:
+                with st.expander("论文目录", expanded=True):
+                    st.dataframe(
+                        [{"层级": e["level"], "标题": e["title"], "页码": e["page"]}
+                         for e in paper.outline], hide_index=True)
+            else:
+                st.info("该论文无目录书签，已按全文处理")
+            if paper.abstract:
+                with st.expander("摘要"):
+                    st.write(paper.abstract)
+            # 每篇论文独立记忆与聊天记录：换论文不串上下文，新论文从空开始
+            convs = st.session_state.setdefault("convs_b", {})
+            conv = convs.setdefault(active,
+                                    Conversation(max_turns=6, compress_threshold=6, keep_recent=3))
+            st.caption("每篇论文的对话记忆独立；超过 6 轮自动压缩旧轮；换论文不串上下文。")
+            if st.button("清空本论文对话", key=f"clear_b_{active}"):
+                conv.clear()
+                st.session_state[f"messages_b_{active}"] = []
+                st.rerun()
+            chat_block(f"b_{active}", paper=paper, conv=conv)

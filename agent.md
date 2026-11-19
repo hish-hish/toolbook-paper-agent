@@ -1,7 +1,7 @@
 # ToolBook-Paper Agent — 项目全记录
 
-> 版本：v1.2（M5 题库已通过审核；消融跑分待择时；明日任务：跑消融/新增资料库/UI 重设计）
-> 日期：2026-11-18
+> 版本：v1.3（M5 消融后台跑分中；UI 重设计完成：页签改名+论文检索列表→详情两视图）
+> 日期：2026-11-19
 > 用途：竞赛项目（非毕业论文内容）。本文件汇总「我们做了什么、怎么做的、怎么跑、踩过哪些坑、下一步做什么」，供本人回顾与交接。
 > 比赛截止：**2026-11-30**。评审形式：**提交作品包**（非现场答辩）。
 
@@ -122,6 +122,7 @@
 - `llm.contextualize_query(问题, 论文背景+历史)` → 检索关键词（失败回退原问题）。
 - `generate_draft(..., paper_context=...)`：背景**仅供理解问题，不作答案依据**。
 - 模块 B 走**同一张核验图**，答案附资源库出处。
+- **UI 重设计（2026-11-19，论文检索列表→详情两视图）**：页签改名「知识点检索/论文检索」。模块B 由"上传即解析即对话"改为：① **列表视图**——多选上传存 `data/papers/`，`list_papers` 扫目录按 mtime 倒序**每篇一行**（文件名+大小+上传时间+「进入对话→」），只读元信息不解析故秒开；② **详情视图**——点进某篇才 `parse_paper` 懒解析（按文件名缓存 `paper_cache`），展示标题/页数/目录/摘要+该篇专属对话区，「←返回论文列表」回列表。视图切换靠 `st.session_state["b_active_paper"]`（None=列表）。记忆/聊天记录键改用文件名（`convs_b[active]` / `messages_b_{active}`），换论文不串上下文。核验/学习指引/统计原样保留。
 
 ### 4.6 上下文记忆（M4 增强，`session.py`）
 - `Turn / Conversation`：`max_turns` 截断（**模块 A=5**）；`compress_threshold>0` 超阈值把旧轮压缩进 digest（**模块 B=6，keep_recent=3**）；LLM 压缩失败回退旧轮原文拼接；`clear()`；无历史 `context()` 返回 ""。
@@ -170,14 +171,14 @@
 | `verify.py` | 两级核验：`normalize` / `mechanical_ok` / `split_sentences` / `judge_sentence` / `verify_draft` |
 | `answering.py` | `generate_draft`：逐句带引用草稿（JSON 协议 insufficient/sentences，摘录须原话） |
 | `agent.py` | LangGraph 编排 + `ask()` 主入口（reset/snapshot 用量、挂 study） |
-| `paper.py` | `parse_paper → PaperInfo`（双栏自然顺序、标题区域限定） |
+| `paper.py` | `parse_paper → PaperInfo`（双栏自然顺序、标题区域限定）；`list_papers(dir)` 扫目录列 PDF（按 mtime 倒序，只读元信息不解析，供论文列表秒开） |
 | `session.py` | `Turn / Conversation` 对话记忆（截断/压缩/清空） |
 | `study.py` | `build_study_guide`：命中节复核 + [相关推荐]跨章简介（编号校验、降级） |
 | `evaluation.py` | **M5 评测与消融打分**（纯函数离线可测）：`hit_level`/`score_question`/`aggregate`/`select_configs`/`format_markdown` + 消融配置矩阵 `ABLATION_CONFIGS`（A–E） |
 | `cli.py` | 命令行入口：import/list/tree/show/index/search/ask |
 
 ### 界面与脚本
-- `app.py`：Streamlit 1.67.0 主程序（侧边栏导入/目录树 + 双页签问答 + `render_answer`/`render_study`/`render_stats`）。**内核与 UI 分离**。
+- `app.py`：Streamlit 1.67.0 主程序（侧边栏导入/目录树 + 双页签问答 + `render_answer`/`render_study`/`render_stats`）。**内核与 UI 分离**。页签名：**知识点检索**（原模块A）/ **论文检索**（原模块B）。论文检索为**列表→详情两视图**（见 4.5）。
 - `scripts/make_demo_books.py`：生成三格式示例书。
 - `scripts/demo_m1.py`：导入+章节树+直查+幂等演示。
 - `scripts/demo_m2.py`：混合检索演示。
@@ -186,7 +187,7 @@
 - `scripts/eval_m3.py`：20 题评测（报告 `data/eval/m3_report.json`）。
 - `scripts/eval_m5.py`：**M5 评测与消融 live 跑分器**（A–E 五组各对 30 题跑完整 `ask()`，增量落盘 `data/eval/m5_report.json` + 一页 `docs/评测报告-M5.md`；`--configs` 子集、`--resume` 续跑）。纯打分逻辑在 `evaluation.py`（已单测），脚本本身是触网运行器。
 
-### 测试 `tests/`（共 **118 个 pytest 全过**）
+### 测试 `tests/`（共 **121 个 pytest 全过**）
 `test_chunking / test_store / test_importer / test_mineru_adapter / test_structure / test_parsers / test_bm25 / test_vector_index / test_rerank / test_retrieval / test_verify / test_llm_fallback / test_paper / test_session / test_answering / test_llm / test_agent / test_study / test_evaluation`。
 - 全部**离线**：假检索/假生成/假核验/假 LLM 客户端，不触网。
 - TDD 纪律：先写失败测试（RED）→ 最小实现（GREEN）→ 重构（REFACTOR）。
@@ -303,6 +304,7 @@ uv run pytest          # 全量 107 个，离线不触网
 | **M4 增强：上下文记忆** | — | ✅ 完成 | A 5 轮 / B 按论文独立+自动压缩+换论文隔离；6 例抽检通过；87 测试 |
 | **M4 再增强：回答展示** | — | ✅ 完成（commit `b64fa7a`） | 五项要求浏览器验证通过；**107 测试** |
 | **M5 评测与演练** | 11.28–11.29 | 🔨 脚手架就绪（commit `e49dc09`，题库已通过，待择时跑分） | 30 题库（22 在库+8 超纲，节号零编造）+ A–E 五组消融开关+跑分脚本已实现；**118 测试**；4–5h 跑分待用户择时 |
+| **M5 UI 重设计** | 11.19 | ✅ 完成 | 页签改名（知识点检索/论文检索）+ 论文检索列表→详情两视图（磁盘持久列表+懒解析+独立记忆）；**121 测试**+浏览器验证 |
 | 比赛 | 11.30 | — | 提交作品包 |
 
 > M1–M4 均**提前于排期**完成。实施计划在 `docs/superpowers/plans/2026-11-18-m1/m2/m3/m4/m4b-*.md`。
@@ -387,10 +389,10 @@ PYTHONIOENCODING=utf-8 uv run --no-sync python scripts/eval_m5.py
 
 ## 13. 下一步（M5，11.28–11.29，可提前）
 
-### 明日任务（2026-11-19，用户指定三项）
-1. **跑消融**：后台执行 `eval_m5.py`（A–E 五组 × 30 题完整 `ask()`，约 4–5h，增量落盘可 `--resume` 续跑）→ 产出 `data/eval/m5_report.json` + `docs/评测报告-M5.md`。题库已通过，**用户说跑才跑**；建议夜间/后台挂起，跑完看对比表定位短板组。
-2. **新增资料库**：导入更多教材/资料进资源库（`toolbook import` → `toolbook index` 重建向量），扩充覆盖面；导入后需重跑相关验收确认章节号一致。
-3. **UI 重新设计**：重做 Streamlit 界面（`app.py`）布局/视觉；改 `app.py` 每次 rerun 生效，改 `src/` 模块需重启服务（见坑 9）。
+### 今日任务（2026-11-19，用户指定三项）
+1. **跑消融**：🔄 **已于 2026-11-19 后台启动**（任务 ID `b7anscy7c`，日志 `data/eval/m5_run.log`）。前置检查全就绪（密钥/ISAC 库 doc1/chroma/本地重排模型/题库）；1 题冒烟通过（配置 A id1 严格命中 3.1，26s/题）。A–E 五组 × 30 题完整 `ask()`，约 4–5h，每组增量落盘 `data/eval/m5_report.json`，可 `--resume` 续跑，完成出 `docs/评测报告-M5.md`。**跑分期间严禁导入新资料/重建向量索引**（会污染对照实验），新增资料库须等跑分结束。
+2. **新增资料库**：⏳ 待消融跑完再做（导入新教材 `toolbook import` → `toolbook index` 重建向量 → 复验章节号）。**与跑分互斥**，不可并行。
+3. **UI 重新设计**：✅ **2026-11-19 完成**（页签改名知识点检索/论文检索；模块B 改列表→详情两视图，扫磁盘持久列表+懒解析+按论文独立记忆）。`list_papers` TDD 3 测试，全量 **121 测试**通过，浏览器端到端验证（列表→点进 CORE→目录+对话→返回）。详见 4.5。
 
 ### 其后
 4. **检索调优**：M3 Q2/Q9/Q16 + M4 B1/B2 的相邻节混淆（方向：查询改写/重排调优，**不砍核验链**）；以消融跑分定位短板组。
