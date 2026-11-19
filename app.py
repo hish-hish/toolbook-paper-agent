@@ -39,10 +39,10 @@ def render_stats(stats: dict):
 
 
 def render_study(g):
-    """渲染「供研究生学习」面板：命中节在前，[相关推荐] 跨章节在后（附内容简介）。"""
+    """渲染「学习参考」面板：命中节在前，[相关推荐] 跨章节在后（附内容简介）。"""
     if not g or (not g.matched and not g.recommended):
         return
-    with st.expander("📚 供研究生学习", expanded=True):
+    with st.expander("📚 学习参考", expanded=True):
         if g.matched:
             st.markdown("**命中章节**（建议系统学习）")
             for s in g.matched:
@@ -73,7 +73,7 @@ def render_answer(r: AnswerResult):
     # 核验句：去掉机械/LLM 徽章前缀（核验仍在内部完成），保留引用角标
     for s in r.sentences:
         st.markdown(f"{s.text} `[{s.ref}]`")
-    # 供研究生学习指引（命中节 + 相关推荐）
+    # 学习参考指引（命中节 + 相关推荐）
     render_study(r.study)
     # 完整出处目录（按书分组＝分书目参考；保留原始角标 [i] 与答案句引用一致）
     with st.expander(f"出处目录（{len(r.sources)} 条，重试 {r.retries} 次）"):

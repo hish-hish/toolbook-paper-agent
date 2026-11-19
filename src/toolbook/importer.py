@@ -8,7 +8,7 @@ from .models import ImportResult, SectionNode
 from .parsers import get_parser
 from .parsers.base import Parser
 from .store import LibraryStore
-from .structure import build_tree
+from .structure import build_tree, prune_non_content
 
 
 def import_file(path, db_path=DEFAULT_DB, parser: Parser | None = None,
@@ -32,6 +32,8 @@ def import_file(path, db_path=DEFAULT_DB, parser: Parser | None = None,
             from . import llm
             proposer = llm.propose_titles
         tree = build_tree(parsed.blocks, doc_title=parsed.title, title_proposer=proposer)
+        # 入库前剪掉非知识节（前言/目录/参考文献/自测等），只留正式章节与知识附录
+        tree = prune_non_content(tree)
         fmt = path.suffix.lstrip(".").lower()
         n_sec = n_chunk = 0
         with store.transaction():

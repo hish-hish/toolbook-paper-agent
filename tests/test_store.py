@@ -56,3 +56,33 @@ def test_transaction_rollback(store):
     except RuntimeError:
         pass
     assert store.find_by_hash("h4") is None
+
+
+def test_delete_sections_cascade(store):
+    # 删前言节：FK 级联清掉其子节与所有相关 chunks；正式章/节及其 chunks 保留
+    with store.transaction():
+        doc_id = store.add_document("书", "pdf", "h5", "x.pdf")
+        chap = store.insert_section(doc_id, None, "1", "第一章", 1, "original", "p1", 1, "章正文")
+        store.insert_chunks(chap, ["章块"])
+        sec = store.insert_section(doc_id, chap, "1.1", "1.1 信号", 2, "original", "p2", 1, "节正文")
+        store.insert_chunks(sec, ["节块1", "节块2"])
+        pre = store.insert_section(doc_id, None, "0", "前言", 1, "system", "", 1, "前言文字")
+        store.insert_chunks(pre, ["前言块"])
+        child = store.insert_section(doc_id, pre, "0.S1", "子节", 2, "system", "", 1, "子文")
+        store.insert_chunks(child, ["子块"])
+    store.delete_sections([pre])
+    assert store.get_section(doc_id, "0") == []
+    assert store.get_section(doc_id, "0.S1") == []      # 子节随父级联删
+    assert store.get_section(doc_id, "1")               # 正式章保留
+    assert store.get_section(doc_id, "1.1")             # 正式节保留
+    n = store.conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+    assert n == 3                                       # 仅剩章块1+节块2，前言/子节块被级联清
+
+
+def test_delete_sections_empty_noop(store):
+    # 空列表不删任何东西
+    with store.transaction():
+        doc_id = store.add_document("书", "pdf", "h6", "x.pdf")
+        store.insert_section(doc_id, None, "1", "章", 1, "original", "p1", 1, "文")
+    store.delete_sections([])
+    assert len(store.get_tree(doc_id)) == 1

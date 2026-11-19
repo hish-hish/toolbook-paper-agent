@@ -93,5 +93,14 @@ class LibraryStore:
         with self.transaction():
             self.conn.execute("DELETE FROM documents WHERE doc_id=?", (doc_id,))
 
+    def delete_sections(self, section_ids):
+        """按 section_id 删节：外键级联自动清掉其子节与 chunks；空列表无操作。"""
+        ids = list(section_ids)
+        if not ids:
+            return
+        with self.transaction():
+            self.conn.executemany(
+                "DELETE FROM sections WHERE section_id=?", [(i,) for i in ids])
+
     def close(self):
         self.conn.close()

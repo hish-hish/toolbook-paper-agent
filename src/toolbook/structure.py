@@ -152,3 +152,35 @@ def iter_nodes(roots: list[SectionNode]) -> Iterator[SectionNode]:
     for n in roots:
         yield n
         yield from iter_nodes(n.children)
+
+
+# 非知识节标题关键词：前置（前言/序/目录/致谢）、后置（参考文献/索引）、每章自测及其答案。
+# 只用于 system 系统编号节；含知识的附录（推导/术语表/符号地图）标题不含这些词，天然保留。
+_NON_CONTENT_PAT = re.compile(
+    "前言|写给读者|序言|出版说明|目录|contents|preface|foreword|acknowledg|致谢"
+    "|参考文献|references|bibliography|索引|index|本章自测|自测答案|各章自测", re.I)
+
+
+def is_non_content_section(number: str, title: str, source: str) -> bool:
+    """判定一节是否为「与正式章节无关」的非知识内容（前言/目录/参考文献/自测等）。
+
+    只判 system 系统编号节：original 原书正式章节一律保留（即便标题含 Reference/Index，
+    如 doc2 的 2.6.2 Reference Signal、5.3.1 Index Modulation，绝不能误删）。
+    number=="0" 是导入自动生成的前言；其余按标题关键词命中。知识附录不命中故保留。
+    """
+    if source != "system":
+        return False
+    if number == "0":
+        return True
+    return bool(_NON_CONTENT_PAT.search(title))
+
+
+def prune_non_content(roots: list[SectionNode]) -> list[SectionNode]:
+    """递归剪掉非知识节及其整棵子树，保留正式章节与知识附录（导入入库前调用）。"""
+    kept = []
+    for n in roots:
+        if is_non_content_section(n.number, n.title, n.source):
+            continue
+        n.children = prune_non_content(n.children)
+        kept.append(n)
+    return kept

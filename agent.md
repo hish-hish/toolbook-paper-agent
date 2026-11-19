@@ -1,6 +1,6 @@
 # ToolBook-Paper Agent — 项目全记录
 
-> 版本：v1.5（知识点检索新增「选书多选 + 出处按书分组」；doc_id 泛化为 doc_ids 多书锁库；134 测试全过。前序：M5 消融完成、检索调优①标题前缀 E 17→19/22、UI 重设计、用户导入 doc2）
+> 版本：v1.6（「供研究生学习」面板改名「学习参考」；新增非知识节过滤——导入即剪枝 + 清理现有库删 103 节（前言/目录/参考文献/自测），正式章节与知识附录全保留；143 测试全过。前序：选书+分书目参考、M5 消融、检索调优①标题前缀 E 17→19/22）
 > 日期：2026-11-19
 > 用途：竞赛项目（非毕业论文内容）。本文件汇总「我们做了什么、怎么做的、怎么跑、踩过哪些坑、下一步做什么」，供本人回顾与交接。
 > 比赛截止：**2026-11-30**。评审形式：**提交作品包**（非现场答辩）。
@@ -89,7 +89,7 @@
 ```
 
 ### 4.1 导入管道（M1）
-`parsers/*` 把文档解析成 `Block`（heading/paragraph + level + locator）→ `structure.py` 识别章节树 `SectionNode`（规则优先：PDF 书签 / DOCX 标题样式 / EPUB 目录 / 标题编号正则；无结构时 `llm_fallback` 让 LLM 提议标题，**提议必须能在原文块定位、≥2 切分点才生效，防编造**，标 `source="system"`）→ `chunking.py` 父子块切分 → `store.py` 写 SQLite（documents / sections / chunks）。
+`parsers/*` 把文档解析成 `Block`（heading/paragraph + level + locator）→ `structure.py` 识别章节树 `SectionNode`（规则优先：PDF 书签 / DOCX 标题样式 / EPUB 目录 / 标题编号正则；无结构时 `llm_fallback` 让 LLM 提议标题，**提议必须能在原文块定位、≥2 切分点才生效，防编造**，标 `source="system"`）→ **`prune_non_content` 剪掉非知识节（见 4.10）** → `chunking.py` 父子块切分 → `store.py` 写 SQLite（documents / sections / chunks）。
 - **幂等**：按文件哈希去重，重复导入同一本书跳过（`ImportResult.skipped=True`）。
 - **PDF 解析器**：书签≥3 走「书签锚点驱动」切分（`search_for` 定位 + 前缀回退处理换行标题）；无书签走字号启发。MinerU OCR 会在编号点号旁加空格（"1 . 1"），适配器已归一化。
 - **章节号体系**（ISAC 书）：部分=P1–P6，章/节=原书编号，无编号标题=S 前缀系统编号（如 `1.S1 本章自测`），避免与原书编号冲突。
@@ -131,7 +131,7 @@
 - UI：模块 A `conv_a`(5 轮)+清空；模块 B `convs_b` 按 `paper_name` 键控(6 轮压缩)+聊天记录 `messages_b_{paper_name}` 同键 → **换论文不串上下文、切回恢复**。
 - **指代消解坑（已修）**：追问「它/那…呢」须先从最近一轮历史确定被追问主题、核心术语放最前、不要改用论文未讨论主题。**该规则必须条件化（仅有历史+追问时生效）**，无条件版会削弱无历史首问的论文背景展开。
 
-### 4.7 供研究生学习指引（M4 再增强，`study.py:build_study_guide`）
+### 4.7 学习参考指引（M4 再增强，`study.py:build_study_guide`；UI 面板原名「供研究生学习」，2026-11-19 改名「学习参考」）
 - **命中章节**：LLM 复核每个命中节是否相关、是否研究生该系统学习的内容，过滤后保留（keep）。
 - **[相关推荐]**：放在命中节后面，LLM 跨章推荐相关章节 + 每节一句话内容简介。**推荐只从真实目录树（`store.get_tree`）选、校验编号存在、排除已命中节、去重、最多 5 个，绝不编造**。
 - LLM 失败降级：命中节全保留 + 推荐空。
@@ -152,6 +152,14 @@
 - **分组 helper**：`sources.py:group_sources_by_book`（纯函数、不依赖 Streamlit、离线可测）按 `doc_title` 分组，**保留每条原始索引 i**，使分组展示时答案句引用角标 `[i]` 不错位；书序按首次出现。`render_answer` 出处目录 expander 改为按书分组（`app.py:80`），仍保留 `[i]` 与 `[系统编号]` 标记。
 - **验证**：TDD 全过（**134 测试**：向量 doc_ids 3 + 混合 doc_ids 4 + 分组 3 + ask 透传 2 等）。live `ask(doc_ids=[1,2])` 端到端跑通、分组渲染正确；中文问法下中文书占优故仅 doc1 进前 5（符合「哪本相关引哪本」，非 bug）。**界面交互验证受限于内置浏览器隐藏视口**（按钮 click 不触发 Streamlit 提交），改用程序化 ask 验证链路；多选框默认全选已用快照确认渲染。
 
+### 4.10 非知识节过滤 + 资源库清理（2026-11-19）
+- **需求**：答案曾引到「0 前言」等非知识内容；用户要求剔除前言及与正式章节无关的东西，**每本书都清**。
+- **分类器** `structure.py:is_non_content_section(number,title,source)`（纯函数离线可测）：**只判 `system` 系统编号节，`original` 正式章节一律保留**（杜绝 doc2 `2.6.2 Reference Signal`/`5.3.1 Index Modulation` 误删）；`number=="0"`（导入自动前言）或标题命中 `前言/写给读者/序言/目录/Contents/Preface/Foreword/致谢/参考文献/References/Bibliography/索引/Index/本章自测/自测答案` 即剔。**知识附录天然保留**（符号地图 S2、附录B推导 B.1–B.9、附录C术语表、附录D D.1–D.5，标题不含上述词）。档位＝**保守清理**（用户批准）。
+- **导入即过滤**：`structure.py:prune_non_content(roots)` 递归剪非知识节及子树；`importer.py:35` 建树后、入库前调用 → 未来导入新书自动干净。
+- **清现有库**：`scripts/clean_library.py`（触库运行器）① 备份 `data/library.db`→`.bak-时间戳`；② 分类器选拟删节 → `store.delete_sections(ids)`（FK 级联清子节+chunks）；③ `build_vector_index(force=True)` 重建清 Chroma 残留向量；④ 打印实删数。
+- **执行结果（2026-11-19）**：doc1 **296→234（删 62）**、doc2 **688→647（删 41，含级联子节）**，共删 **103 节**；向量索引重建 **4534 条**，库 chunks 与 Chroma 一致；备份 `data/library.db.bak-20261119-173512`。验证：两本书残留非知识节=0，B.1/附录C/D.3/符号地图/正式章 3.1 全保留。
+- **后果**：删节必须重建索引（一致性必需，非②③实验）；检索语料变化 → M5 基线可能漂移（重跑 E 付费暂缓）；有 `.bak` 可逆（恢复 db+重建即还原）。**143 测试全过**（分类器 6 + 导入剪枝 1 + 级联删 2）。
+
 ---
 
 ## 5. 代码结构（每个文件职责）
@@ -167,10 +175,10 @@
 | `parsers/epub_parser.py` | EPUB（ebooklib，NCX/NAV 目录） |
 | `parsers/pdf_pymupdf.py` | PDF 默认解析（PyMuPDF，书签锚点/字号启发） |
 | `parsers/pdf_mineru.py` | MinerU 适配器（`TOOLBOOK_PDF_PARSER=mineru` 切换，编号空格归一化） |
-| `structure.py` | 章节树识别（规则优先 + `_llm_fallback_nodes` 兜底，防编造） |
+| `structure.py` | 章节树识别（规则优先 + `_llm_fallback_nodes` 兜底，防编造）；`is_non_content_section`/`prune_non_content` 非知识节过滤 |
 | `chunking.py` | 父子块 small-to-big 切分 |
-| `store.py` | SQLite 元数据/原文：`import` 幂等、`get_tree` / `get_section` / `list_documents` |
-| `importer.py` | 导入流水线编排（`import_file`，`llm_fallback=True` 默认开） |
+| `store.py` | SQLite 元数据/原文：`import` 幂等、`get_tree` / `get_section` / `list_documents` / `delete_sections`（FK 级联） |
+| `importer.py` | 导入流水线编排（`import_file`，`llm_fallback=True` 默认开；入库前 `prune_non_content` 剪非知识节） |
 | `bm25_index.py` | jieba + rank_bm25 内存关键词索引 |
 | `vector_index.py` | Chroma PersistentClient 向量索引（`build_vector_index` / `vector_search`，bge-m3；`doc_ids` 多书 `$in` 过滤） |
 | `rerank.py` | 本地 bge-reranker-v2-m3 交叉编码器（CPU，懒加载，失败永久降级 None） |
@@ -194,8 +202,9 @@
 - `scripts/demo_m4.py`：论文问答两题（附库内出处 6.2/7.4）。
 - `scripts/eval_m3.py`：20 题评测（报告 `data/eval/m3_report.json`）。
 - `scripts/eval_m5.py`：**M5 评测与消融 live 跑分器**（A–E 五组各对 30 题跑完整 `ask()`，增量落盘 `data/eval/m5_report.json` + 一页 `docs/评测报告-M5.md`；`--configs` 子集、`--resume` 续跑）。纯打分逻辑在 `evaluation.py`（已单测），脚本本身是触网运行器。
+- `scripts/clean_library.py`：**资源库清理运行器**（备份 db → 分类器剔非知识节 → 重建向量索引 → 报告实删数，见 4.10）。判定逻辑在 `structure.py`（已单测），脚本本身触库。
 
-### 测试 `tests/`（共 **134 个 pytest 全过**）
+### 测试 `tests/`（共 **143 个 pytest 全过**）
 `test_chunking / test_store / test_importer / test_mineru_adapter / test_structure / test_parsers / test_bm25 / test_vector_index / test_rerank / test_retrieval / test_verify / test_llm_fallback / test_paper / test_session / test_answering / test_llm / test_agent / test_study / test_evaluation / test_sources`。
 - 全部**离线**：假检索/假生成/假核验/假 LLM 客户端，不触网。
 - TDD 纪律：先写失败测试（RED）→ 最小实现（GREEN）→ 重构（REFACTOR）。
@@ -270,7 +279,7 @@ uv run python scripts/eval_m3.py     # 20 题评测（约 35 分钟，CPU 重排
 
 ### 7.6 测试
 ```bash
-uv run pytest          # 全量 134 个，离线不触网
+uv run pytest          # 全量 143 个，离线不触网
 ```
 - Windows Git Bash 下建议 `PYTHONIOENCODING=utf-8`。
 - **不要用 `pytest | tail`**（管道会掩盖 pytest 退出码），单独跑。
@@ -314,6 +323,7 @@ uv run pytest          # 全量 134 个，离线不触网
 | **M5 评测与演练** | 11.28–11.29 | ✅ 评测+消融完成（11.19 提前） | 30 题 A–E 五组消融跑完：E 完整系统宽松 17/22(77%)、拒答 8/8(100%)；**调优①重排标题前缀后锁 doc1 重跑 E→19/22(86%)、零回归**；报告落盘；剩 3 题（空正文/公式召回）待②③；彩排录屏待办 |
 | **M5 UI 重设计** | 11.19 | ✅ 完成 | 页签改名（知识点检索/论文检索）+ 论文检索列表→详情两视图（磁盘持久列表+懒解析+独立记忆）；**121 测试**+浏览器验证 |
 | **M5 选书+分书目参考** | 11.19 | ✅ 完成 | 知识点检索多选书（默认全选）→综合答案→出处按书分组；doc_id 泛化 doc_ids 多书锁库；**134 测试**+程序化端到端验证（界面交互受隐藏视口限制） |
+| **M5 学习参考改名+非知识节清理** | 11.19 | ✅ 完成 | 面板改名「学习参考」；分类器+导入即剪枝+清库删 103 节（doc1 62/doc2 41），正式章节与知识附录全保留，索引重建一致；**143 测试** |
 | 比赛 | 11.30 | — | 提交作品包 |
 
 > M1–M4 均**提前于排期**完成。实施计划在 `docs/superpowers/plans/2026-11-18-m1/m2/m3/m4/m4b-*.md`。
@@ -389,7 +399,7 @@ PYTHONIOENCODING=utf-8 uv run --no-sync python scripts/eval_m5.py
 
 - **密钥**：只放 `.env`（用户自己填）或环境变量 `SILICONFLOW_API_KEY`；**绝不贴聊天、绝不提交**；`.env` 已 gitignore。
 - **数据**：书/论文 PDF 存 `data/`（已 gitignore），**不提交**；`data/library.db`、`data/chroma/`、`data/models/` 均本地持久。
-- **Git**：仓库 https://github.com/hish-hish/toolbook-paper-agent（**私有**）；master 跟踪 origin/master。`d3e5e0f`（M5 消融报告）及之前已推送；`8b22aeb`（检索调优①标题前缀，E 17→19/22）与**选书+分书目参考 feature**（doc_ids 多书锁库 + sources.py 分组 + 134 测试）均**本地已提交，推送遇网络重置暂缓**，网络恢复再 `git push origin master`。
+- **Git**：仓库 https://github.com/hish-hish/toolbook-paper-agent（**私有**）；master 跟踪 origin/master。`d3e5e0f`（M5 消融报告）及之前已推送；`8b22aeb`（检索调优①标题前缀）、`dac212a`（选书+分书目参考）与**学习参考改名+非知识节清理 feature**（分类器/剪枝/清库 103 节/143 测试）均**本地已提交，推送遇网络重置暂缓**，网络恢复再 `git push origin master`。
 - **中文 commit**：每次新增 commit 说明用中文（可保留 `feat:/fix:/docs:` 前缀），正文中文；**不改写/翻译/rebase 已有历史**。
 - **中文注释**：每个 `.py` 文件开头中文模块 docstring + 每个函数/类/功能块中文注释（zh-code-style 规范）。
 - **核验链绝不砍**：工期再紧，两级核验 + 出处 + 拒答路径是底线，可砍的只有增强项（重排/双语改写可后置）。
@@ -406,7 +416,8 @@ PYTHONIOENCODING=utf-8 uv run --no-sync python scripts/eval_m5.py
 
 ### 其后
 4. **选书检索 + 分书目参考**：✅ **2026-11-19 完成（用户批准 bounded 设计，TDD）**。知识点检索页签加多选书框（默认全选），`doc_id` 泛化为 `doc_ids` 多书锁库（向量 `$in` + 父块过滤），出处按书分组（`sources.py`，保留引用角标）。**134 测试全过** + 程序化端到端验证；界面交互验证受内置浏览器隐藏视口限制（详见 4.9）。**未提交②③（空正文/公式召回重建），需用户批准。**
-5. **检索调优**：🔨 **进行中（2026-11-19）**。
+5. **学习参考改名 + 非知识节清理**：✅ **2026-11-19 完成（用户批准保守档，TDD）**。面板「供研究生学习」→「学习参考」；`is_non_content_section`/`prune_non_content` 分类剪枝（只动 system，正式章节零误删）+ 导入即过滤 + `clean_library.py` 清现有库：doc1 删 62、doc2 删 41（共 103 节），重建索引 4534 条一致，知识附录全保留，备份可逆。**143 测试全过**（详见 4.10）。
+6. **检索调优**：🔨 **进行中（2026-11-19）**。
    - **已改（TDD，未提交）**：重排文本加节标题前缀 `f"{h.title}\n{h.text[:1400]}"`（`retrieval.py:100`），新增测试断言重排文本含节标题，**122 测试全过**。离线重跑 5 miss：**救回 id2(3.2)/id8(5.3)→rank1**（这两节标题逐字对应问题、正文公式开头被 cross-encoder 压分，加标题前缀后纠正）。不碰核验链/向量索引。
    - **剩余 3 miss 完整根因（双库取证后）**：
      - **id14→9.2「用 SVD 把 MIMO 化成并行信道」：doc1 该节正文为空（0 字）**——doc1 全 296 节**唯一**空正文节，导入个例 bug（非系统性）。检索/重排救不了空节，按宁缺勿错本应拒答。修法：查导入流水线为何漏抽 9.2 正文，局部补抽/重导该节。
@@ -414,8 +425,8 @@ PYTHONIOENCODING=utf-8 uv run --no-sync python scripts/eval_m5.py
      - **doc2 干扰（主要 id13）**：英文 ISAC 书同主题，doc2 的 17.2 Micro-Doppler 等节挤占候选；但那些节讲 micro-Doppler sensing 与「子载波间干扰 ICI」不完全对题。
    - **下一步 ROI 排序（待用户批准）**：① 评测锁 doc1 重跑 E 确认 title-prefix 净收益（不重建索引，~15–20min 付费 API，预计 17→19/22）→ 坐实后提交；② 修 9.2 空正文（局部重导，预计 +1→20/22）；③ 标题进索引+重建（救公式节召回，预计 →22/22，代价最大）。**未确认净收益前不提交 title-prefix；不擅自重建索引/重导/重跑。**
    - **① ✅ 完成（2026-11-19，用户批准）**：ask() 加 `doc_id` 参数透传检索节点（TDD +2 测试，**124 全过**）；`eval_m5.py` 加 `--doc-id` 锁库开关。锁 doc1 重跑 E（`data/eval/m5_E_doc1_titlefix.json`，不覆盖原消融报告）：**在库 17→19/22(86%)、拒答 8/8、救回 id2(3.2)/id8(5.3) 均升 rank1、零回归**（原 17 命中全保住）。BM25 语料漂移未致回归。**净收益坐实 → title-prefix 修复 + doc_id 接线 + 测试 + 报告已提交**。验证报告 `docs/检索调优验证-M5.md`。剩 id13/14/21 属②③（空正文/公式召回），非重排可解。
-6. **演示彩排 + 录屏备份**（现场网络风险预案：提前预导入资源库、缓存 embedding）。
-7. 整理**作品包**（评审形式为提交作品包，非现场答辩；消融对比表是实验数据卖点）。
+7. **演示彩排 + 录屏备份**（现场网络风险预案：提前预导入资源库、缓存 embedding）。
+8. 整理**作品包**（评审形式为提交作品包，非现场答辩；消融对比表是实验数据卖点）。
 
 ---
 
