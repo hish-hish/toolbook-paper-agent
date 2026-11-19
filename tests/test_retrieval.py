@@ -122,3 +122,59 @@ def test_rerank_text_includes_section_title(library, monkeypatch):
     # 每条重排文本的首行应是某个命中节的标题（而非正文首句）
     for t in captured["texts"]:
         assert t.split("\n", 1)[0] in hit_titles
+
+
+@pytest.fixture
+def library2(tmp_path, monkeypatch):
+    # 三本书（第三本不含查询词，避免 BM25 半库零 IDF 退化）：doc1/doc2 都讲傅里叶
+    from docx import Document
+    db = tmp_path / "lib.db"
+    books = [("a.docx", "1.1 傅里叶变换", "傅里叶变换把时域信号分解为不同频率的正弦分量。"),
+             ("b.docx", "1.1 傅里叶级数", "傅里叶级数用正弦叠加表示周期信号。"),
+             ("c.docx", "1.1 信道编码", "信道编码通过增加冗余提高传输可靠性。")]
+    for name, head, body in books:
+        d = Document()
+        d.add_heading("第1章 信号分析", level=1)
+        d.add_heading(head, level=2)
+        d.add_paragraph(body)
+        p = tmp_path / name
+        d.save(str(p))
+        import_file(p, db)
+    captured = {}
+
+    def fake_vec(q, top_k=30, doc_ids=None):
+        captured["doc_ids"] = doc_ids
+        return []  # 向量路置空，隔离测试 BM25+父块去重处的书目过滤
+
+    monkeypatch.setattr(rt, "vector_search", fake_vec)
+    return db, captured
+
+
+def test_hybrid_doc_ids_single_book(library2):
+    # 只选书1：命中全部来自 doc1，且 doc_ids 透传给向量路
+    db, captured = library2
+    hits = rt.hybrid_search("傅里叶", db_path=db, use_llm=False, use_rerank=False, doc_ids=[1])
+    assert hits and all(h.doc_id == 1 for h in hits)
+    assert captured["doc_ids"] == [1]
+
+
+def test_hybrid_doc_ids_second_book(library2):
+    # 只选书2：命中全部来自 doc2
+    db, _ = library2
+    hits = rt.hybrid_search("傅里叶", db_path=db, use_llm=False, use_rerank=False, doc_ids=[2])
+    assert hits and all(h.doc_id == 2 for h in hits)
+
+
+def test_hybrid_doc_ids_multi_books(library2):
+    # 选书1+2：两本书都出现
+    db, _ = library2
+    hits = rt.hybrid_search("傅里叶", db_path=db, use_llm=False, use_rerank=False, doc_ids=[1, 2])
+    assert {h.doc_id for h in hits} == {1, 2}
+
+
+def test_hybrid_doc_ids_none_searches_all(library2):
+    # 不传 doc_ids（None）：搜全库，查询词命中的两本书都出现（向后兼容）
+    db, captured = library2
+    hits = rt.hybrid_search("傅里叶", db_path=db, use_llm=False, use_rerank=False)
+    assert {h.doc_id for h in hits} == {1, 2}
+    assert captured["doc_ids"] is None

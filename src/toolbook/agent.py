@@ -23,7 +23,7 @@ class AgentState(TypedDict, total=False):
     paper_context: str
     history_context: str
     db_path: object
-    doc_id: object
+    doc_ids: object
     use_rerank: bool
     use_bm25: bool
     use_vector: bool
@@ -43,7 +43,7 @@ def retrieve_node(state: AgentState) -> dict:
                          use_bm25=state.get("use_bm25", True),
                          use_vector=state.get("use_vector", True),
                          use_llm=state.get("use_llm", True),
-                         doc_id=state.get("doc_id"))
+                         doc_ids=state.get("doc_ids"))
     return {"hits": hits, "searched": state.get("searched", []) + [state["query"]]}
 
 
@@ -112,12 +112,12 @@ def build_graph():
 def ask(question: str, db_path=config.DEFAULT_DB, use_rerank: bool = True,
         paper=None, history_context: str = "",
         use_bm25: bool = True, use_vector: bool = True, use_llm: bool = True,
-        doc_id: int | None = None) -> AnswerResult:
+        doc_ids: list[int] | None = None) -> AnswerResult:
     """问答主入口（模块A/B 共用）：paper/history_context 提供背景时先做上下文化改写。
 
     回答附带本次用量统计；非拒答时附「供研究生学习」指引（命中节复核 + 跨章推荐）。
     use_bm25/use_vector/use_llm/use_rerank 为消融开关，默认全开（行为与原先一致）。
-    doc_id 限定只搜某本书（评测锁库用），默认 None 搜全库。
+    doc_ids 限定只搜某些书（选书/评测锁库用），默认 None 搜全库。
     """
     llm.reset_usage()  # 本次回答的 token/调用次数从零累计
     ctx_parts = []
@@ -133,7 +133,7 @@ def ask(question: str, db_path=config.DEFAULT_DB, use_rerank: bool = True,
                           "history_context": history_context,
                           "db_path": db_path, "use_rerank": use_rerank,
                           "use_bm25": use_bm25, "use_vector": use_vector, "use_llm": use_llm,
-                          "doc_id": doc_id,
+                          "doc_ids": doc_ids,
                           "retries": 0, "searched": []})
     result = final["result"]
     # 非拒答才构建学习指引（用最终命中节）；拒答不给推荐，宁缺勿错

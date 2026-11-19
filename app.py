@@ -18,6 +18,7 @@ from toolbook.importer import import_file
 from toolbook.models import AnswerResult
 from toolbook.paper import list_papers, parse_paper
 from toolbook.session import Conversation
+from toolbook.sources import group_sources_by_book
 from toolbook.store import LibraryStore
 from toolbook.vector_index import build_vector_index
 
@@ -74,12 +75,14 @@ def render_answer(r: AnswerResult):
         st.markdown(f"{s.text} `[{s.ref}]`")
     # 供研究生学习指引（命中节 + 相关推荐）
     render_study(r.study)
-    # 完整出处目录（保留系统编号标记）
+    # 完整出处目录（按书分组＝分书目参考；保留原始角标 [i] 与答案句引用一致）
     with st.expander(f"出处目录（{len(r.sources)} 条，重试 {r.retries} 次）"):
-        for i, src in enumerate(r.sources):
-            mark = "" if src.source == "original" else " **[系统编号]**"
-            title = src.title.removeprefix(src.number).strip() or src.title
-            st.markdown(f"[{i}] 《{src.doc_title}》 {src.number} {title}{mark}（{src.locator}）")
+        for book, items in group_sources_by_book(r.sources):
+            st.markdown(f"**《{book}》**")
+            for i, src in items:
+                mark = "" if src.source == "original" else " **[系统编号]**"
+                title = src.title.removeprefix(src.number).strip() or src.title
+                st.markdown(f"[{i}] {src.number} {title}{mark}（{src.locator}）")
     render_stats(r.stats)
 
 
@@ -90,8 +93,11 @@ def answer_gist(r: AnswerResult) -> str:
     return "\n".join(s.text for s in r.sentences)[:400]
 
 
-def chat_block(key: str, paper=None, conv=None):
-    """通用问答区：历史消息 + 输入框 + spinner 跑 ask()；key 区分会话，conv 为上下文记忆。"""
+def chat_block(key: str, paper=None, conv=None, doc_ids=None):
+    """通用问答区：历史消息 + 输入框 + spinner 跑 ask()；key 区分会话，conv 为上下文记忆。
+
+    doc_ids 限定检索书目（模块A 选书）；None 搜全库（模块B 默认）。
+    """
     hist_key = f"messages_{key}"
     if hist_key not in st.session_state:
         st.session_state[hist_key] = []
@@ -110,7 +116,8 @@ def chat_block(key: str, paper=None, conv=None):
     with st.chat_message("assistant"):
         with st.spinner("检索 → 生成 → 核验中（约 30–60 秒）…"):
             r = ask(prompt, use_rerank=st.session_state.get("use_rerank", True),
-                    paper=paper, history_context=conv.context() if conv else "")
+                    paper=paper, history_context=conv.context() if conv else "",
+                    doc_ids=doc_ids)
         render_answer(r)
     st.session_state[hist_key].append(("assistant", r))
     # 答完记一轮记忆（下一问的指代/追问靠它补全）
@@ -164,12 +171,20 @@ store.close()
 tab_a, tab_b = st.tabs(["知识点检索", "论文检索"])
 with tab_a:
     st.caption("答案只返回核验通过的内容（摘录机械子串匹配 / 归纳逐句裁判+原文双锚定，核验在内部完成）。上下文记忆：自动保留最近 5 轮。")
+    # 检索书目多选（默认全选＝搜全库）：只有选中的书参与检索，出处按书分组展示
+    book_titles = [d["title"] for d in docs]
+    picked = st.multiselect("检索书目（可多选，默认全部）", book_titles,
+                            default=book_titles, key="a_books")
+    a_doc_ids = [d["doc_id"] for d in docs if d["title"] in picked]
     conv_a = st.session_state.setdefault("conv_a", Conversation(max_turns=5))
     if st.button("清空对话", key="clear_a"):
         conv_a.clear()
         st.session_state["messages_a"] = []
         st.rerun()
-    chat_block("a", conv=conv_a)
+    if not a_doc_ids:
+        st.warning("请至少选择一本书再提问。")
+    else:
+        chat_block("a", conv=conv_a, doc_ids=a_doc_ids)
 with tab_b:
     st.caption("上传论文 PDF → 论文按行列表 → 点进某篇开始对话，答案附本地资源库出处（论文本身不作答案依据）。")
     papers_dir = config.DATA_DIR / "papers"

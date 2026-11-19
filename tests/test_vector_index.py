@@ -39,3 +39,42 @@ def test_vector_search_returns_chunk_ids(env):
     assert len(hits) == 2
     assert hits[0][0] == 1
     assert hits[0][1] >= hits[1][1]
+
+
+@pytest.fixture
+def env2(tmp_path, monkeypatch):
+    # 两本书各一节一块：doc1→chunk1、doc2→chunk2，用于验证书目过滤（$in）
+    monkeypatch.setattr(vi.config, "CHROMA_DIR", tmp_path / "chroma")
+    monkeypatch.setattr(vi, "embed_texts", lambda texts, **k: [[float(len(t)), 1.0] for t in texts])
+    db = tmp_path / "lib.db"
+    s = LibraryStore(db)
+    with s.transaction():
+        d1 = s.add_document("书A", "docx", "hA", "a.docx")
+        sid1 = s.insert_section(d1, None, "1.1", "节A", 2, "original", "p1", 1, "正文A")
+        s.insert_chunks(sid1, ["甲"])
+        d2 = s.add_document("书B", "docx", "hB", "b.docx")
+        sid2 = s.insert_section(d2, None, "1.1", "节B", 2, "original", "p1", 1, "正文B")
+        s.insert_chunks(sid2, ["乙"])
+    s.close()
+    return db
+
+
+def test_vector_search_doc_ids_single(env2):
+    # 只选书1：仅返回 doc1 的子块（chunk1），doc2 被过滤掉
+    vi.build_vector_index(env2)
+    hits = vi.vector_search("甲", top_k=5, doc_ids=[1])
+    assert [cid for cid, _ in hits] == [1]
+
+
+def test_vector_search_doc_ids_multi(env2):
+    # 选书1+2：两本书的子块都返回
+    vi.build_vector_index(env2)
+    hits = vi.vector_search("甲", top_k=5, doc_ids=[1, 2])
+    assert {cid for cid, _ in hits} == {1, 2}
+
+
+def test_vector_search_doc_ids_none_returns_all(env2):
+    # 不传 doc_ids（None）：搜全库，两本书都返回（向后兼容）
+    vi.build_vector_index(env2)
+    hits = vi.vector_search("甲", top_k=5)
+    assert {cid for cid, _ in hits} == {1, 2}

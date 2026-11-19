@@ -1,6 +1,6 @@
 # ToolBook-Paper Agent — 项目全记录
 
-> 版本：v1.4（M5 消融完成；检索调优①重排标题前缀落地，锁 doc1 重跑 E 17→19/22 零回归；UI 重设计完成；用户导入第二本书 doc2）
+> 版本：v1.5（知识点检索新增「选书多选 + 出处按书分组」；doc_id 泛化为 doc_ids 多书锁库；134 测试全过。前序：M5 消融完成、检索调优①标题前缀 E 17→19/22、UI 重设计、用户导入 doc2）
 > 日期：2026-11-19
 > 用途：竞赛项目（非毕业论文内容）。本文件汇总「我们做了什么、怎么做的、怎么跑、踩过哪些坑、下一步做什么」，供本人回顾与交接。
 > 比赛截止：**2026-11-30**。评审形式：**提交作品包**（非现场答辩）。
@@ -99,7 +99,7 @@
 2. **BM25 路**：原问题 + 中文关键词 + 英文关键词各查一次（top 30）。
 3. **向量路**：原问题语义检索（bge-m3，top 30）。
 4. **RRF 融合**（k=60）：只看名次不看原始分，`score = Σ 1/(k+rank)`。
-5. **子块→父块映射去重**：保留最佳名次，记录命中方式 `bm25/vector/both`（最多 30 个父块）。
+5. **子块→父块映射去重**：保留最佳名次，记录命中方式 `bm25/vector/both`（最多 30 个父块）。**`doc_ids` 多书锁库**（`retrieval.py:40/79`）：非 None 时只保留 `doc_id` 在列表内的父块；向量路同步用 Chroma `where={"doc_id":{"$in":doc_ids}}` 过滤（`vector_index.py:60`）。None=搜全库，空列表=无命中。
 6. **组装父块全文**：同编号多 part 拼接，带完整出处。
 7. **本地重排** `rerank.rerank_scores`：交叉编码器逐对精打分覆盖展示分并重排；失败/关闭自动降级为 RRF 序。返回 `top_k=5` 个 `SearchHit`。
 - **章节号直查旁路**：`store.get_section(doc_id, number)` 直接取原文，不走检索。
@@ -145,6 +145,13 @@
 - `ask()` 开始 `reset_usage`、结束 `snapshot_usage` 挂到 `AnswerResult.stats`；`study` 挂 `AnswerResult.study`。
 - UI 底部 caption：`本次消耗 X tokens（输入/输出）· 模型调用 N 次（对话/向量化）· 重排本地不计费`。**本地重排不耗云端 token，不计费。**
 
+### 4.9 选书检索 + 分书目参考（2026-11-19，知识点检索页签）
+- **需求**：原界面回答只来自一本书；改为用户自选资源库中的书（可多选），答案出处**按书分组**展示（分书目参考）。
+- **bounded 设计（用户批准）**：多选书（默认全选＝搜全库）→ **一个综合答案**（不按书拆答案）→ 出处按书分组；**综合检索、哪本相关引哪本**（不设每书配额，选中的书若无相关命中则不出现）；空选→警告「请至少选择一本书再提问」且不提问。**模块 B 不变**（仍搜全库）。不做：每书配额、模块 B 选书、答案生成改动、索引重建。
+- **接线**：`app.py:176` 多选框 `检索书目` → `a_doc_ids`（`app.py:178`）→ `chat_block(..., doc_ids=a_doc_ids)`（`app.py:187`）→ `ask(doc_ids=...)`（`agent.py:115/136`）→ `retrieve_node`（`agent.py:46`）→ `hybrid_search(doc_ids=...)`。`doc_id`（单书）泛化为 `doc_ids: list[int]|None`（多书），评测锁库 `eval_m5.py --doc-id` 包装成 `[id]`。
+- **分组 helper**：`sources.py:group_sources_by_book`（纯函数、不依赖 Streamlit、离线可测）按 `doc_title` 分组，**保留每条原始索引 i**，使分组展示时答案句引用角标 `[i]` 不错位；书序按首次出现。`render_answer` 出处目录 expander 改为按书分组（`app.py:80`），仍保留 `[i]` 与 `[系统编号]` 标记。
+- **验证**：TDD 全过（**134 测试**：向量 doc_ids 3 + 混合 doc_ids 4 + 分组 3 + ask 透传 2 等）。live `ask(doc_ids=[1,2])` 端到端跑通、分组渲染正确；中文问法下中文书占优故仅 doc1 进前 5（符合「哪本相关引哪本」，非 bug）。**界面交互验证受限于内置浏览器隐藏视口**（按钮 click 不触发 Streamlit 提交），改用程序化 ask 验证链路；多选框默认全选已用快照确认渲染。
+
 ---
 
 ## 5. 代码结构（每个文件职责）
@@ -165,20 +172,21 @@
 | `store.py` | SQLite 元数据/原文：`import` 幂等、`get_tree` / `get_section` / `list_documents` |
 | `importer.py` | 导入流水线编排（`import_file`，`llm_fallback=True` 默认开） |
 | `bm25_index.py` | jieba + rank_bm25 内存关键词索引 |
-| `vector_index.py` | Chroma PersistentClient 向量索引（`build_vector_index` / `vector_search`，bge-m3） |
+| `vector_index.py` | Chroma PersistentClient 向量索引（`build_vector_index` / `vector_search`，bge-m3；`doc_ids` 多书 `$in` 过滤） |
 | `rerank.py` | 本地 bge-reranker-v2-m3 交叉编码器（CPU，懒加载，失败永久降级 None） |
-| `retrieval.py` | `hybrid_search`：改写→BM25+向量→RRF→父块去重→重排→top_k SearchHit |
+| `retrieval.py` | `hybrid_search`：改写→BM25+向量→RRF→父块去重（`doc_ids` 多书锁库）→重排（标题前缀）→top_k SearchHit |
 | `verify.py` | 两级核验：`normalize` / `mechanical_ok` / `split_sentences` / `judge_sentence` / `verify_draft` |
 | `answering.py` | `generate_draft`：逐句带引用草稿（JSON 协议 insufficient/sentences，摘录须原话） |
-| `agent.py` | LangGraph 编排 + `ask()` 主入口（reset/snapshot 用量、挂 study） |
+| `agent.py` | LangGraph 编排 + `ask()` 主入口（reset/snapshot 用量、挂 study、`doc_ids` 选书/锁库透传） |
 | `paper.py` | `parse_paper → PaperInfo`（双栏自然顺序、标题区域限定）；`list_papers(dir)` 扫目录列 PDF（按 mtime 倒序，只读元信息不解析，供论文列表秒开） |
 | `session.py` | `Turn / Conversation` 对话记忆（截断/压缩/清空） |
 | `study.py` | `build_study_guide`：命中节复核 + [相关推荐]跨章简介（编号校验、降级） |
+| `sources.py` | `group_sources_by_book`：出处按书名分组（纯函数，保留原始索引 i 供引用角标对齐） |
 | `evaluation.py` | **M5 评测与消融打分**（纯函数离线可测）：`hit_level`/`score_question`/`aggregate`/`select_configs`/`format_markdown` + 消融配置矩阵 `ABLATION_CONFIGS`（A–E） |
 | `cli.py` | 命令行入口：import/list/tree/show/index/search/ask |
 
 ### 界面与脚本
-- `app.py`：Streamlit 1.67.0 主程序（侧边栏导入/目录树 + 双页签问答 + `render_answer`/`render_study`/`render_stats`）。**内核与 UI 分离**。页签名：**知识点检索**（原模块A）/ **论文检索**（原模块B）。论文检索为**列表→详情两视图**（见 4.5）。
+- `app.py`：Streamlit 1.67.0 主程序（侧边栏导入/目录树 + 双页签问答 + `render_answer`/`render_study`/`render_stats`）。**内核与 UI 分离**。页签名：**知识点检索**（原模块A）/ **论文检索**（原模块B）。知识点检索含**选书多选框**（默认全选，出处按书分组，见 4.9）；论文检索为**列表→详情两视图**（见 4.5）。
 - `scripts/make_demo_books.py`：生成三格式示例书。
 - `scripts/demo_m1.py`：导入+章节树+直查+幂等演示。
 - `scripts/demo_m2.py`：混合检索演示。
@@ -187,8 +195,8 @@
 - `scripts/eval_m3.py`：20 题评测（报告 `data/eval/m3_report.json`）。
 - `scripts/eval_m5.py`：**M5 评测与消融 live 跑分器**（A–E 五组各对 30 题跑完整 `ask()`，增量落盘 `data/eval/m5_report.json` + 一页 `docs/评测报告-M5.md`；`--configs` 子集、`--resume` 续跑）。纯打分逻辑在 `evaluation.py`（已单测），脚本本身是触网运行器。
 
-### 测试 `tests/`（共 **121 个 pytest 全过**）
-`test_chunking / test_store / test_importer / test_mineru_adapter / test_structure / test_parsers / test_bm25 / test_vector_index / test_rerank / test_retrieval / test_verify / test_llm_fallback / test_paper / test_session / test_answering / test_llm / test_agent / test_study / test_evaluation`。
+### 测试 `tests/`（共 **134 个 pytest 全过**）
+`test_chunking / test_store / test_importer / test_mineru_adapter / test_structure / test_parsers / test_bm25 / test_vector_index / test_rerank / test_retrieval / test_verify / test_llm_fallback / test_paper / test_session / test_answering / test_llm / test_agent / test_study / test_evaluation / test_sources`。
 - 全部**离线**：假检索/假生成/假核验/假 LLM 客户端，不触网。
 - TDD 纪律：先写失败测试（RED）→ 最小实现（GREEN）→ 重构（REFACTOR）。
 
@@ -262,7 +270,7 @@ uv run python scripts/eval_m3.py     # 20 题评测（约 35 分钟，CPU 重排
 
 ### 7.6 测试
 ```bash
-uv run pytest          # 全量 107 个，离线不触网
+uv run pytest          # 全量 134 个，离线不触网
 ```
 - Windows Git Bash 下建议 `PYTHONIOENCODING=utf-8`。
 - **不要用 `pytest | tail`**（管道会掩盖 pytest 退出码），单独跑。
@@ -305,6 +313,7 @@ uv run pytest          # 全量 107 个，离线不触网
 | **M4 再增强：回答展示** | — | ✅ 完成（commit `b64fa7a`） | 五项要求浏览器验证通过；**107 测试** |
 | **M5 评测与演练** | 11.28–11.29 | ✅ 评测+消融完成（11.19 提前） | 30 题 A–E 五组消融跑完：E 完整系统宽松 17/22(77%)、拒答 8/8(100%)；**调优①重排标题前缀后锁 doc1 重跑 E→19/22(86%)、零回归**；报告落盘；剩 3 题（空正文/公式召回）待②③；彩排录屏待办 |
 | **M5 UI 重设计** | 11.19 | ✅ 完成 | 页签改名（知识点检索/论文检索）+ 论文检索列表→详情两视图（磁盘持久列表+懒解析+独立记忆）；**121 测试**+浏览器验证 |
+| **M5 选书+分书目参考** | 11.19 | ✅ 完成 | 知识点检索多选书（默认全选）→综合答案→出处按书分组；doc_id 泛化 doc_ids 多书锁库；**134 测试**+程序化端到端验证（界面交互受隐藏视口限制） |
 | 比赛 | 11.30 | — | 提交作品包 |
 
 > M1–M4 均**提前于排期**完成。实施计划在 `docs/superpowers/plans/2026-11-18-m1/m2/m3/m4/m4b-*.md`。
@@ -380,7 +389,7 @@ PYTHONIOENCODING=utf-8 uv run --no-sync python scripts/eval_m5.py
 
 - **密钥**：只放 `.env`（用户自己填）或环境变量 `SILICONFLOW_API_KEY`；**绝不贴聊天、绝不提交**；`.env` 已 gitignore。
 - **数据**：书/论文 PDF 存 `data/`（已 gitignore），**不提交**；`data/library.db`、`data/chroma/`、`data/models/` 均本地持久。
-- **Git**：仓库 https://github.com/hish-hish/toolbook-paper-agent（**私有**）；master 跟踪 origin/master，最新 `e49dc09`（M5 脚手架）已推送。
+- **Git**：仓库 https://github.com/hish-hish/toolbook-paper-agent（**私有**）；master 跟踪 origin/master。`d3e5e0f`（M5 消融报告）及之前已推送；`8b22aeb`（检索调优①标题前缀，E 17→19/22）与**选书+分书目参考 feature**（doc_ids 多书锁库 + sources.py 分组 + 134 测试）均**本地已提交，推送遇网络重置暂缓**，网络恢复再 `git push origin master`。
 - **中文 commit**：每次新增 commit 说明用中文（可保留 `feat:/fix:/docs:` 前缀），正文中文；**不改写/翻译/rebase 已有历史**。
 - **中文注释**：每个 `.py` 文件开头中文模块 docstring + 每个函数/类/功能块中文注释（zh-code-style 规范）。
 - **核验链绝不砍**：工期再紧，两级核验 + 出处 + 拒答路径是底线，可砍的只有增强项（重排/双语改写可后置）。
@@ -396,7 +405,8 @@ PYTHONIOENCODING=utf-8 uv run --no-sync python scripts/eval_m5.py
 3. **UI 重新设计**：✅ **2026-11-19 完成**（页签改名知识点检索/论文检索；模块B 改列表→详情两视图，扫磁盘持久列表+懒解析+按论文独立记忆）。`list_papers` TDD 3 测试，全量 **121 测试**通过，浏览器端到端验证（列表→点进 CORE→目录+对话→返回）。详见 4.5。
 
 ### 其后
-4. **检索调优**：🔨 **进行中（2026-11-19）**。
+4. **选书检索 + 分书目参考**：✅ **2026-11-19 完成（用户批准 bounded 设计，TDD）**。知识点检索页签加多选书框（默认全选），`doc_id` 泛化为 `doc_ids` 多书锁库（向量 `$in` + 父块过滤），出处按书分组（`sources.py`，保留引用角标）。**134 测试全过** + 程序化端到端验证；界面交互验证受内置浏览器隐藏视口限制（详见 4.9）。**未提交②③（空正文/公式召回重建），需用户批准。**
+5. **检索调优**：🔨 **进行中（2026-11-19）**。
    - **已改（TDD，未提交）**：重排文本加节标题前缀 `f"{h.title}\n{h.text[:1400]}"`（`retrieval.py:100`），新增测试断言重排文本含节标题，**122 测试全过**。离线重跑 5 miss：**救回 id2(3.2)/id8(5.3)→rank1**（这两节标题逐字对应问题、正文公式开头被 cross-encoder 压分，加标题前缀后纠正）。不碰核验链/向量索引。
    - **剩余 3 miss 完整根因（双库取证后）**：
      - **id14→9.2「用 SVD 把 MIMO 化成并行信道」：doc1 该节正文为空（0 字）**——doc1 全 296 节**唯一**空正文节，导入个例 bug（非系统性）。检索/重排救不了空节，按宁缺勿错本应拒答。修法：查导入流水线为何漏抽 9.2 正文，局部补抽/重导该节。
@@ -404,8 +414,8 @@ PYTHONIOENCODING=utf-8 uv run --no-sync python scripts/eval_m5.py
      - **doc2 干扰（主要 id13）**：英文 ISAC 书同主题，doc2 的 17.2 Micro-Doppler 等节挤占候选；但那些节讲 micro-Doppler sensing 与「子载波间干扰 ICI」不完全对题。
    - **下一步 ROI 排序（待用户批准）**：① 评测锁 doc1 重跑 E 确认 title-prefix 净收益（不重建索引，~15–20min 付费 API，预计 17→19/22）→ 坐实后提交；② 修 9.2 空正文（局部重导，预计 +1→20/22）；③ 标题进索引+重建（救公式节召回，预计 →22/22，代价最大）。**未确认净收益前不提交 title-prefix；不擅自重建索引/重导/重跑。**
    - **① ✅ 完成（2026-11-19，用户批准）**：ask() 加 `doc_id` 参数透传检索节点（TDD +2 测试，**124 全过**）；`eval_m5.py` 加 `--doc-id` 锁库开关。锁 doc1 重跑 E（`data/eval/m5_E_doc1_titlefix.json`，不覆盖原消融报告）：**在库 17→19/22(86%)、拒答 8/8、救回 id2(3.2)/id8(5.3) 均升 rank1、零回归**（原 17 命中全保住）。BM25 语料漂移未致回归。**净收益坐实 → title-prefix 修复 + doc_id 接线 + 测试 + 报告已提交**。验证报告 `docs/检索调优验证-M5.md`。剩 id13/14/21 属②③（空正文/公式召回），非重排可解。
-5. **演示彩排 + 录屏备份**（现场网络风险预案：提前预导入资源库、缓存 embedding）。
-6. 整理**作品包**（评审形式为提交作品包，非现场答辩；消融对比表是实验数据卖点）。
+6. **演示彩排 + 录屏备份**（现场网络风险预案：提前预导入资源库、缓存 embedding）。
+7. 整理**作品包**（评审形式为提交作品包，非现场答辩；消融对比表是实验数据卖点）。
 
 ---
 

@@ -29,15 +29,15 @@ DEFAULT_OUT = DATA_DIR / "eval" / "m5_report.json"
 DEFAULT_MD = ROOT / "docs" / "评测报告-M5.md"
 
 
-def run_config(cfg: str, flags: dict, items: list, doc_id: int | None = None) -> dict:
+def run_config(cfg: str, flags: dict, items: list, doc_ids: list[int] | None = None) -> dict:
     """对一组配置跑全部题目：逐题 ask→打分→打印进度，返回 {flags, summary, rows}。
 
-    doc_id 限定只搜某本书（评测锁库，与消融同口径）；默认 None 搜全库。
+    doc_ids 限定只搜某些书（评测锁库，与消融同口径）；默认 None 搜全库。
     """
     rows = []
     for item in items:
         t0 = time.time()
-        r = ask(item["question"], doc_id=doc_id, **flags)
+        r = ask(item["question"], doc_ids=doc_ids, **flags)
         got = [s.number for s in r.sources]
         row = ev.score_question(item, r.refused, got, r.retries)
         rows.append(row)
@@ -84,7 +84,9 @@ def main(argv=None):
         print("没有要跑的配置（都已完成或未匹配）。")
     for cfg in todo:
         print(f"\n=== 配置 {cfg}（{ev.CONFIG_LABELS[cfg]}）{ev.ABLATION_CONFIGS[cfg]} ===", flush=True)
-        report["configs"][cfg] = run_config(cfg, ev.ABLATION_CONFIGS[cfg], items, args.doc_id)
+        report["configs"][cfg] = run_config(
+            cfg, ev.ABLATION_CONFIGS[cfg], items,
+            [args.doc_id] if args.doc_id is not None else None)
         report["configs_order"] = [c for c in ev.ABLATION_CONFIGS if c in report["configs"]]
         # 每组跑完即落盘：中断不丢已完成组
         out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")

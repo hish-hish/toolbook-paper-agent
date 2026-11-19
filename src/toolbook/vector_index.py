@@ -48,13 +48,16 @@ def build_vector_index(db_path=config.DEFAULT_DB, force: bool = False) -> int:
     return col.count()
 
 
-def vector_search(question: str, top_k: int = 30, doc_id: int | None = None) -> list[tuple[int, float]]:
-    """问题向量化 → Chroma 近邻；返回 [(chunk_id, 余弦相似度)] 降序。"""
+def vector_search(question: str, top_k: int = 30, doc_ids: list[int] | None = None) -> list[tuple[int, float]]:
+    """问题向量化 → Chroma 近邻；返回 [(chunk_id, 余弦相似度)] 降序。
+
+    doc_ids 限定只搜某些书（多书用 $in 过滤）；None 搜全库，空列表则无命中。
+    """
     col = get_collection()
     if col.count() == 0:
         return []
     qv = embed_texts([question])[0]
-    where = {"doc_id": doc_id} if doc_id is not None else None
+    where = {"doc_id": {"$in": doc_ids}} if doc_ids is not None else None
     res = col.query(query_embeddings=[qv], n_results=min(top_k, col.count()), where=where)
     # cosine 空间下 distance = 1 - 相似度，换算回相似度便于阅读
     return [(int(cid), 1.0 - dist) for cid, dist in zip(res["ids"][0], res["distances"][0])]
