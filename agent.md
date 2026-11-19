@@ -1,6 +1,6 @@
 # ToolBook-Paper Agent — 项目全记录
 
-> 版本：v1.6（「供研究生学习」面板改名「学习参考」；新增非知识节过滤——导入即剪枝 + 清理现有库删 103 节（前言/目录/参考文献/自测），正式章节与知识附录全保留；143 测试全过。前序：选书+分书目参考、M5 消融、检索调优①标题前缀 E 17→19/22）
+> 版本：v1.7（学习参考面板去掉 [系统编号] 徽章（出处目录仍保留作 D5 卖点）；新增 `section_label` 理顺「1 第一章」编号+标题重复——标题自带「第X章/节/部分」时不再叠加数字编号；150 测试全过。前序：非知识节过滤删 103 节、选书+分书目参考、M5 消融、检索调优①标题前缀 E 17→19/22）
 > 日期：2026-11-19
 > 用途：竞赛项目（非毕业论文内容）。本文件汇总「我们做了什么、怎么做的、怎么跑、踩过哪些坑、下一步做什么」，供本人回顾与交接。
 > 比赛截止：**2026-11-30**。评审形式：**提交作品包**（非现场答辩）。
@@ -137,6 +137,7 @@
 - LLM 失败降级：命中节全保留 + 推荐空。
 - 学习指引是**建议性面板**，与答案两级核验链互不影响。
 - 按用户要求**不写「LLM 推荐」字样**，推荐节统一前缀 `[相关推荐]`。
+- **展示理顺（2026-11-19，用户批准）**：① 学习参考面板（命中节 + 相关推荐）**去掉 `[系统编号]` 徽章**（出处目录仍保留，作 D5 防编造卖点）；② 编号+标题重复用纯函数 `sources.py:section_label(number,title)` 理顺——标题已含「第X章/节/部分」时不再叠加冗余数字编号（「1 第一章 …」→「第一章 …」），「3.1 采样…」自带编号仍正常去重，「第三方」等非章节词不误判，空标题回退编号。`render_study` 与 `render_answer` 出处目录三处统一改用该函数（出处目录保留徽章）。
 
 ### 4.8 用量统计（M4 再增强，`llm.py`）
 - 模块全局 `_usage` 累加器 + `reset_usage()` / `snapshot_usage()` / `_record_usage(resp, kind)`。
@@ -189,7 +190,7 @@
 | `paper.py` | `parse_paper → PaperInfo`（双栏自然顺序、标题区域限定）；`list_papers(dir)` 扫目录列 PDF（按 mtime 倒序，只读元信息不解析，供论文列表秒开） |
 | `session.py` | `Turn / Conversation` 对话记忆（截断/压缩/清空） |
 | `study.py` | `build_study_guide`：命中节复核 + [相关推荐]跨章简介（编号校验、降级） |
-| `sources.py` | `group_sources_by_book`：出处按书名分组（纯函数，保留原始索引 i 供引用角标对齐） |
+| `sources.py` | `group_sources_by_book`：出处按书名分组（保留原始索引 i 供角标对齐）；`section_label`：节标签去编号重复（标题自带「第X章」时不叠加数字编号），均纯函数离线可测 |
 | `evaluation.py` | **M5 评测与消融打分**（纯函数离线可测）：`hit_level`/`score_question`/`aggregate`/`select_configs`/`format_markdown` + 消融配置矩阵 `ABLATION_CONFIGS`（A–E） |
 | `cli.py` | 命令行入口：import/list/tree/show/index/search/ask |
 
@@ -204,7 +205,7 @@
 - `scripts/eval_m5.py`：**M5 评测与消融 live 跑分器**（A–E 五组各对 30 题跑完整 `ask()`，增量落盘 `data/eval/m5_report.json` + 一页 `docs/评测报告-M5.md`；`--configs` 子集、`--resume` 续跑）。纯打分逻辑在 `evaluation.py`（已单测），脚本本身是触网运行器。
 - `scripts/clean_library.py`：**资源库清理运行器**（备份 db → 分类器剔非知识节 → 重建向量索引 → 报告实删数，见 4.10）。判定逻辑在 `structure.py`（已单测），脚本本身触库。
 
-### 测试 `tests/`（共 **143 个 pytest 全过**）
+### 测试 `tests/`（共 **150 个 pytest 全过**）
 `test_chunking / test_store / test_importer / test_mineru_adapter / test_structure / test_parsers / test_bm25 / test_vector_index / test_rerank / test_retrieval / test_verify / test_llm_fallback / test_paper / test_session / test_answering / test_llm / test_agent / test_study / test_evaluation / test_sources`。
 - 全部**离线**：假检索/假生成/假核验/假 LLM 客户端，不触网。
 - TDD 纪律：先写失败测试（RED）→ 最小实现（GREEN）→ 重构（REFACTOR）。
@@ -279,7 +280,7 @@ uv run python scripts/eval_m3.py     # 20 题评测（约 35 分钟，CPU 重排
 
 ### 7.6 测试
 ```bash
-uv run pytest          # 全量 143 个，离线不触网
+uv run pytest          # 全量 150 个，离线不触网
 ```
 - Windows Git Bash 下建议 `PYTHONIOENCODING=utf-8`。
 - **不要用 `pytest | tail`**（管道会掩盖 pytest 退出码），单独跑。
@@ -324,6 +325,7 @@ uv run pytest          # 全量 143 个，离线不触网
 | **M5 UI 重设计** | 11.19 | ✅ 完成 | 页签改名（知识点检索/论文检索）+ 论文检索列表→详情两视图（磁盘持久列表+懒解析+独立记忆）；**121 测试**+浏览器验证 |
 | **M5 选书+分书目参考** | 11.19 | ✅ 完成 | 知识点检索多选书（默认全选）→综合答案→出处按书分组；doc_id 泛化 doc_ids 多书锁库；**134 测试**+程序化端到端验证（界面交互受隐藏视口限制） |
 | **M5 学习参考改名+非知识节清理** | 11.19 | ✅ 完成 | 面板改名「学习参考」；分类器+导入即剪枝+清库删 103 节（doc1 62/doc2 41），正式章节与知识附录全保留，索引重建一致；**143 测试** |
+| **M5 学习参考展示理顺** | 11.19 | ✅ 完成 | 学习参考面板去 [系统编号] 徽章（出处目录保留）；`section_label` 理顺「1 第一章」编号+标题重复；**150 测试**+页面加载验证 |
 | 比赛 | 11.30 | — | 提交作品包 |
 
 > M1–M4 均**提前于排期**完成。实施计划在 `docs/superpowers/plans/2026-11-18-m1/m2/m3/m4/m4b-*.md`。
@@ -416,7 +418,7 @@ PYTHONIOENCODING=utf-8 uv run --no-sync python scripts/eval_m5.py
 
 ### 其后
 4. **选书检索 + 分书目参考**：✅ **2026-11-19 完成（用户批准 bounded 设计，TDD）**。知识点检索页签加多选书框（默认全选），`doc_id` 泛化为 `doc_ids` 多书锁库（向量 `$in` + 父块过滤），出处按书分组（`sources.py`，保留引用角标）。**134 测试全过** + 程序化端到端验证；界面交互验证受内置浏览器隐藏视口限制（详见 4.9）。**未提交②③（空正文/公式召回重建），需用户批准。**
-5. **学习参考改名 + 非知识节清理**：✅ **2026-11-19 完成（用户批准保守档，TDD）**。面板「供研究生学习」→「学习参考」；`is_non_content_section`/`prune_non_content` 分类剪枝（只动 system，正式章节零误删）+ 导入即过滤 + `clean_library.py` 清现有库：doc1 删 62、doc2 删 41（共 103 节），重建索引 4534 条一致，知识附录全保留，备份可逆。**143 测试全过**（详见 4.10）。
+5. **学习参考改名 + 非知识节清理**：✅ **2026-11-19 完成（用户批准保守档，TDD）**。面板「供研究生学习」→「学习参考」；`is_non_content_section`/`prune_non_content` 分类剪枝（只动 system，正式章节零误删）+ 导入即过滤 + `clean_library.py` 清现有库：doc1 删 62、doc2 删 41（共 103 节），重建索引 4534 条一致，知识附录全保留，备份可逆。**143 测试全过**（详见 4.10）。**展示理顺（同日，用户批准「只删学习参考面板」+「理顺」）**：学习参考面板去 `[系统编号]` 徽章（出处目录保留作 D5 卖点）；`sources.py:section_label` 去「1 第一章」编号+标题重复（标题自带「第X章/节/部分」时不叠加数字编号），三处渲染统一改用，**150 测试全过**（详见 4.7）。
 6. **检索调优**：🔨 **进行中（2026-11-19）**。
    - **已改（TDD，未提交）**：重排文本加节标题前缀 `f"{h.title}\n{h.text[:1400]}"`（`retrieval.py:100`），新增测试断言重排文本含节标题，**122 测试全过**。离线重跑 5 miss：**救回 id2(3.2)/id8(5.3)→rank1**（这两节标题逐字对应问题、正文公式开头被 cross-encoder 压分，加标题前缀后纠正）。不碰核验链/向量索引。
    - **剩余 3 miss 完整根因（双库取证后）**：

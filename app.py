@@ -18,7 +18,7 @@ from toolbook.importer import import_file
 from toolbook.models import AnswerResult
 from toolbook.paper import list_papers, parse_paper
 from toolbook.session import Conversation
-from toolbook.sources import group_sources_by_book
+from toolbook.sources import group_sources_by_book, section_label
 from toolbook.store import LibraryStore
 from toolbook.vector_index import build_vector_index
 
@@ -46,16 +46,13 @@ def render_study(g):
         if g.matched:
             st.markdown("**命中章节**（建议系统学习）")
             for s in g.matched:
-                mark = "" if s.source == "original" else " [系统编号]"
-                title = s.title.removeprefix(s.number).strip() or s.title
-                st.markdown(f"- {s.number} {title}（{s.locator}）《{s.doc_title}》{mark}")
+                # 学习参考面板不显示 [系统编号] 徽章（出处目录仍保留作 D5 卖点）
+                st.markdown(f"- {section_label(s.number, s.title)}（{s.locator}）《{s.doc_title}》")
         if g.recommended:
             st.markdown("**相关推荐**")
             for s in g.recommended:
-                mark = "" if s.source == "original" else " [系统编号]"
-                title = s.title.removeprefix(s.number).strip() or s.title
                 summary = f"：{s.summary}" if s.summary else ""
-                st.markdown(f"- [相关推荐] {s.number} {title}（{s.locator}）{summary}{mark}")
+                st.markdown(f"- [相关推荐] {section_label(s.number, s.title)}（{s.locator}）{summary}")
 
 
 def render_answer(r: AnswerResult):
@@ -81,8 +78,7 @@ def render_answer(r: AnswerResult):
             st.markdown(f"**《{book}》**")
             for i, src in items:
                 mark = "" if src.source == "original" else " **[系统编号]**"
-                title = src.title.removeprefix(src.number).strip() or src.title
-                st.markdown(f"[{i}] {src.number} {title}{mark}（{src.locator}）")
+                st.markdown(f"[{i}] {section_label(src.number, src.title)}{mark}（{src.locator}）")
     render_stats(r.stats)
 
 
