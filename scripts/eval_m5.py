@@ -29,12 +29,15 @@ DEFAULT_OUT = DATA_DIR / "eval" / "m5_report.json"
 DEFAULT_MD = ROOT / "docs" / "评测报告-M5.md"
 
 
-def run_config(cfg: str, flags: dict, items: list) -> dict:
-    """对一组配置跑全部题目：逐题 ask→打分→打印进度，返回 {flags, summary, rows}。"""
+def run_config(cfg: str, flags: dict, items: list, doc_id: int | None = None) -> dict:
+    """对一组配置跑全部题目：逐题 ask→打分→打印进度，返回 {flags, summary, rows}。
+
+    doc_id 限定只搜某本书（评测锁库，与消融同口径）；默认 None 搜全库。
+    """
     rows = []
     for item in items:
         t0 = time.time()
-        r = ask(item["question"], **flags)
+        r = ask(item["question"], doc_id=doc_id, **flags)
         got = [s.number for s in r.sources]
         row = ev.score_question(item, r.refused, got, r.retries)
         rows.append(row)
@@ -56,6 +59,8 @@ def main(argv=None):
     ap.add_argument("--questions", default=str(DEFAULT_QUESTIONS), help="题库 JSON 路径")
     ap.add_argument("--out", default=str(DEFAULT_OUT), help="报告 JSON 落盘路径")
     ap.add_argument("--md", default=str(DEFAULT_MD), help="对比表 Markdown 路径")
+    ap.add_argument("--doc-id", type=int, default=None,
+                    help="限定只搜某本书（评测锁库，与消融同口径）；默认全库")
     args = ap.parse_args(argv)
 
     items = json.loads(Path(args.questions).read_text(encoding="utf-8"))
@@ -70,6 +75,7 @@ def main(argv=None):
     report.setdefault("in_total", sum(1 for i in items if not i.get("expect_refuse")))
     report.setdefault("out_total", sum(1 for i in items if i.get("expect_refuse")))
     report.setdefault("configs", {})
+    report["doc_id_scope"] = args.doc_id  # 记录本次评测锁库范围（None=全库）
     done = list(report["configs"].keys())
 
     requested = [c.strip().upper() for c in args.configs.split(",")] if args.configs else None
@@ -78,7 +84,7 @@ def main(argv=None):
         print("没有要跑的配置（都已完成或未匹配）。")
     for cfg in todo:
         print(f"\n=== 配置 {cfg}（{ev.CONFIG_LABELS[cfg]}）{ev.ABLATION_CONFIGS[cfg]} ===", flush=True)
-        report["configs"][cfg] = run_config(cfg, ev.ABLATION_CONFIGS[cfg], items)
+        report["configs"][cfg] = run_config(cfg, ev.ABLATION_CONFIGS[cfg], items, args.doc_id)
         report["configs_order"] = [c for c in ev.ABLATION_CONFIGS if c in report["configs"]]
         # 每组跑完即落盘：中断不丢已完成组
         out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -197,3 +197,31 @@ def test_ask_default_flags_all_on(patch_nodes):
     patch_nodes.setattr(ag, "verify_draft", lambda d, h: [VerifiedSentence("原文内容", "excerpt", 0, "mechanical", "原文内容")])
     ag.ask("采样定理？")
     assert seen["use_bm25"] is True and seen["use_vector"] is True and seen["use_llm"] is True
+
+
+def test_ask_threads_doc_id(patch_nodes):
+    # 评测锁库：ask(doc_id=1) 把 doc_id 透传到检索节点的 hybrid_search，只搜第一本书
+    seen = {}
+
+    def fake_search(q, **k):
+        seen.update(k)
+        return [_hit()]
+
+    patch_nodes.setattr(ag, "hybrid_search", fake_search)
+    patch_nodes.setattr(ag, "verify_draft", lambda d, h: [VerifiedSentence("原文内容", "excerpt", 0, "mechanical", "原文内容")])
+    ag.ask("采样定理？", doc_id=1)
+    assert seen["doc_id"] == 1
+
+
+def test_ask_default_doc_id_none(patch_nodes):
+    # 默认搜全库：不传 doc_id 时检索收到 None（向后兼容，产品实际使用搜全部文档）
+    seen = {}
+
+    def fake_search(q, **k):
+        seen.update(k)
+        return [_hit()]
+
+    patch_nodes.setattr(ag, "hybrid_search", fake_search)
+    patch_nodes.setattr(ag, "verify_draft", lambda d, h: [VerifiedSentence("原文内容", "excerpt", 0, "mechanical", "原文内容")])
+    ag.ask("采样定理？")
+    assert seen["doc_id"] is None

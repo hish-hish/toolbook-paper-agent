@@ -95,7 +95,9 @@ def hybrid_search(question: str, db_path=config.DEFAULT_DB, top_k: int = 5,
         # 7) 本地重排（失败自动降级为 RRF 序）；成功时用重排分覆盖展示分
         if use_rerank and hits:
             from .rerank import rerank_scores
-            scores = rerank_scores(question, [h.text[:1500] for h in hits])
+            # 重排文本前缀加节标题：标题是最强主题信号（常逐字对应问题），
+            # 纯正文会让公式开头的目标节被 cross-encoder 压分、误选散文引言节
+            scores = rerank_scores(question, [f"{h.title}\n{h.text[:1400]}" for h in hits])
             if scores is not None:
                 for h, s in zip(hits, scores):
                     h.score = s

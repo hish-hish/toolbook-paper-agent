@@ -104,3 +104,21 @@ def test_use_bm25_false_skips_bm25_route(library, monkeypatch):
     assert bm25_calls == []
     assert hits and hits[0].number == "2.2"
     assert all(h.matched_by == "vector" for h in hits)
+
+
+def test_rerank_text_includes_section_title(library, monkeypatch):
+    # 重排文本应为「节标题+正文」：标题是最强主题信号，纯正文会让公式开头的目标节被压分
+    import toolbook.rerank as rr
+    captured = {}
+
+    def fake_scores(q, texts):
+        captured["texts"] = texts
+        return [0.5] * len(texts)
+
+    monkeypatch.setattr(rr, "rerank_scores", fake_scores)
+    hits = rt.hybrid_search("傅里叶变换", db_path=library, use_llm=False, use_rerank=True)
+    hit_titles = {h.title for h in hits}
+    assert captured["texts"], "重排未被调用"
+    # 每条重排文本的首行应是某个命中节的标题（而非正文首句）
+    for t in captured["texts"]:
+        assert t.split("\n", 1)[0] in hit_titles
