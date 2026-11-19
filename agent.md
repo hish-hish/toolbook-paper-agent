@@ -435,7 +435,7 @@ PYTHONIOENCODING=utf-8 uv run --no-sync python scripts/eval_m5.py
 
 - **密钥**：只放 `.env`（用户自己填）或环境变量 `SILICONFLOW_API_KEY`；**绝不贴聊天、绝不提交**；`.env` 已 gitignore。
 - **数据**：书/论文 PDF 存 `data/`（已 gitignore），**不提交**；`data/library.db`、`data/chroma/`、`data/models/` 均本地持久。
-- **Git**：仓库 https://github.com/hish-hish/toolbook-paper-agent（**私有**）；master 跟踪 origin/master。**已推送至 `c10df28`**（含 `8b22aeb` 检索调优①标题前缀、`dac212a` 选书+分书目参考、`d6cfe84` 学习参考改名+非知识节清理、`709763d` 学习参考展示理顺：去徽章+section_label）；2026-11-19 推送遇间歇网络重置，重试后成功（踩坑#12）。
+- **Git**：仓库 https://github.com/hish-hish/toolbook-paper-agent（**私有**）；master 跟踪 origin/master。**已推送至 `ae4da30`**（含 `709763d` 学习参考展示理顺、`3ea52e9` 跨语言实测记录、`ae4da30` 云端部署适配：去 torch 重排 API+登录门+精简 Docker）；2026-11-19 推送遇间歇网络重置，重试后成功（踩坑#12）。
 - **中文 commit**：每次新增 commit 说明用中文（可保留 `feat:/fix:/docs:` 前缀），正文中文；**不改写/翻译/rebase 已有历史**。
 - **中文注释**：每个 `.py` 文件开头中文模块 docstring + 每个函数/类/功能块中文注释（zh-code-style 规范）。
 - **核验链绝不砍**：工期再紧，两级核验 + 出处 + 拒答路径是底线，可砍的只有增强项（重排/双语改写可后置）。
