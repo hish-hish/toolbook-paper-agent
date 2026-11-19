@@ -4,6 +4,7 @@
 启动：uv run streamlit run app.py
 """
 import sys
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -13,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 import streamlit as st
 
 from toolbook import config
+from toolbook import auth
 from toolbook.agent import ask
 from toolbook.importer import import_file
 from toolbook.models import AnswerResult
@@ -24,9 +26,25 @@ from toolbook.vector_index import build_vector_index
 
 st.set_page_config(page_title="ToolBook-Paper Agent", layout="wide")
 
+# ---------- 登录门（云部署设 TOOLBOOK_AUTH_USER/PASS 开启；本地不设则跳过） ----------
+if auth.auth_enabled() and not st.session_state.get("authed"):
+    st.title("ToolBook-Paper Agent")
+    st.caption("请输入账号密码后访问。")
+    with st.form("login_form"):
+        u = st.text_input("用户名")
+        p = st.text_input("密码", type="password")
+        submitted = st.form_submit_button("登录")
+    if submitted:
+        if auth.verify_login(u, p):
+            st.session_state["authed"] = True
+            st.rerun()
+        else:
+            st.error("用户名或密码错误")
+    st.stop()
+
 
 def render_stats(stats: dict):
-    """渲染本次回答的用量统计：token 消耗 + 模型调用次数（本地重排不计费）。"""
+    """渲染本次回答的用量统计：token 消耗 + 模型调用次数（云端重排计费，本地重排不计费）。"""
     if not stats:
         return
     total = stats.get("total_tokens", 0)
@@ -34,8 +52,16 @@ def render_stats(stats: dict):
     ct = stats.get("completion_tokens", 0)
     chat = stats.get("chat_calls", 0)
     emb = stats.get("embed_calls", 0)
+    rr = stats.get("rerank_calls", 0)
+    detail = f"对话 {chat} / 向量化 {emb}"
+    # 云端重排（api 后端）计入调用与 token；本地重排不计费
+    if rr:
+        detail += f" / 重排 {rr}"
+        tail = "重排走云端 API"
+    else:
+        tail = "重排本地不计费"
     st.caption(f"本次消耗 {total} tokens（输入 {pt} / 输出 {ct}）· "
-               f"模型调用 {chat + emb} 次（对话 {chat} / 向量化 {emb}）· 重排本地不计费")
+               f"模型调用 {chat + emb + rr} 次（{detail}）· {tail}")
 
 
 def render_study(g):
@@ -123,7 +149,16 @@ def chat_block(key: str, paper=None, conv=None, doc_ids=None):
 
 # ---------- 侧边栏：重排开关 + 资源库管理 ----------
 st.sidebar.title("ToolBook-Paper Agent")
-st.session_state["use_rerank"] = st.sidebar.checkbox("本地重排（更准，CPU 约 +2 秒/轮）", value=True)
+# 重排开关标签随后端变化：云端 api 走硅基流动，本地走 CPU 模型
+_rr_label = ("云端重排（更准，走硅基流动 API）"
+             if os.environ.get("TOOLBOOK_RERANK_BACKEND", "local").lower() == "api"
+             else "本地重排（更准，CPU 约 +2 秒/轮）")
+st.session_state["use_rerank"] = st.sidebar.checkbox(_rr_label, value=True)
+# 登录门开启时提供退出登录（清会话标记，回到登录页）
+if auth.auth_enabled():
+    if st.sidebar.button("退出登录"):
+        st.session_state["authed"] = False
+        st.rerun()
 st.sidebar.subheader("资源库")
 store = LibraryStore(config.DEFAULT_DB)
 docs = store.list_documents()

@@ -1,0 +1,16 @@
+# Docker 构建上下文忽略：缩小上传体积 + 绝不把密钥/资源库烤进镜像
+.venv/
+data/
+.git/
+.env
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.idea/
+dist/
+*.egg-info/
+# 以下非运行时所需（镜像只 COPY src/ app.py requirements-cloud.txt）
+docs/
+tests/
+scripts/
+*.md

@@ -14,7 +14,7 @@ from . import config
 _client = None
 
 # 本次回答的用量累计（ask 开始清零、结束快照）；所有云端调用都经此累加
-_usage = {"chat_calls": 0, "embed_calls": 0,
+_usage = {"chat_calls": 0, "embed_calls": 0, "rerank_calls": 0,
           "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
 
@@ -155,3 +155,31 @@ def summarize_turns(turns_text: str) -> str:
     prompt = (f"以下是用户与资源库的历史问答：\n{turns_text[:3000]}\n\n"
               "请压缩成不超过200字的要点，保留讨论过的知识点与结论，直接输出要点。")
     return chat(prompt).strip()
+
+
+def rerank_api(question: str, texts: list[str]) -> list[float]:
+    """云端重排（硅基流动 /v1/rerank，bge-reranker-v2-m3）：免本地 torch，云部署用。
+
+    返回与输入 texts 同序的相关度分（0~1）。API 的 results 按分降序且 index 乱序，
+    须按 index 还原回输入顺序。无密钥抛带指引的异常，由 rerank 分发层捕获降级。
+    """
+    key = config.load_api_key()
+    if not key:
+        raise RuntimeError("未配置 SILICONFLOW_API_KEY：请在项目根 .env 填入硅基流动密钥")
+    payload = {"model": config.RERANK_MODEL, "query": question,
+               "documents": texts, "top_n": len(texts), "return_documents": False}
+    with _make_http_client() as client:
+        resp = client.post(config.RERANK_API_URL, json=payload,
+                           headers={"Authorization": f"Bearer {key}"}, timeout=60)
+        resp.raise_for_status()
+        data = resp.json()
+    # 计入用量：云端重排不再是「本地不计费」
+    _usage["rerank_calls"] += 1
+    u = data.get("usage") or {}
+    _usage["prompt_tokens"] += u.get("prompt_tokens", 0) or 0
+    _usage["total_tokens"] += u.get("total_tokens", 0) or 0
+    # 按 index 把乱序分数还原成与输入 documents 同序
+    scores = [0.0] * len(texts)
+    for r in data.get("results", []):
+        scores[r["index"]] = float(r["relevance_score"])
+    return scores

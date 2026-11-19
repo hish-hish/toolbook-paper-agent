@@ -114,7 +114,7 @@ def test_usage_accumulates_then_resets(monkeypatch):
     u = llm.snapshot_usage()
     assert u["chat_calls"] == 2 and u["total_tokens"] == 6
     llm.reset_usage()
-    assert llm.snapshot_usage() == {"chat_calls": 0, "embed_calls": 0,
+    assert llm.snapshot_usage() == {"chat_calls": 0, "embed_calls": 0, "rerank_calls": 0,
                                     "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
 
@@ -142,3 +142,73 @@ def test_contextualize_prompt_handles_formula(monkeypatch):
     monkeypatch.setattr(llm, "chat", fake_chat)
     llm.contextualize_query("式(14)怎么理解", "论文《CORE》")
     assert "公式" in captured["prompt"]
+
+
+# ---------- 云端重排 API（硅基流动 /v1/rerank，去本地 torch） ----------
+
+def _fake_rerank_client(results, usage, captured):
+    # 构造假 httpx 客户端：记录请求 url/payload，返回指定 results/usage
+    class FakeResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"results": results, "usage": usage}
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def post(self, url, json=None, headers=None, timeout=None):
+            captured["url"] = url
+            captured["payload"] = json
+            captured["headers"] = headers
+            return FakeResp()
+
+    return FakeClient()
+
+
+def test_rerank_api_maps_scores_to_input_order(monkeypatch):
+    # results 按分降序且 index 乱序 → 必须还原成与输入 documents 同序的分数
+    captured = {}
+    results = [{"index": 2, "relevance_score": 0.9},
+               {"index": 0, "relevance_score": 0.5},
+               {"index": 1, "relevance_score": 0.1}]
+    monkeypatch.setattr(llm, "_make_http_client",
+                        lambda: _fake_rerank_client(results, {"total_tokens": 10, "prompt_tokens": 10}, captured))
+    monkeypatch.setattr(llm.config, "load_api_key", lambda: "sk-test")
+    llm.reset_usage()
+    scores = llm.rerank_api("问题", ["a", "b", "c"])
+    assert scores == [0.5, 0.1, 0.9]
+    # 请求打到 /rerank，模型与候选文本正确，带 Bearer 鉴权
+    assert captured["url"].endswith("/rerank")
+    assert captured["payload"]["model"] == llm.config.RERANK_MODEL
+    assert captured["payload"]["query"] == "问题"
+    assert captured["payload"]["documents"] == ["a", "b", "c"]
+    assert "Bearer sk-test" in captured["headers"]["Authorization"]
+
+
+def test_rerank_api_records_usage(monkeypatch):
+    # 云端重排计入 rerank_calls 与 token（不再「本地不计费」）
+    captured = {}
+    results = [{"index": 0, "relevance_score": 0.8}]
+    monkeypatch.setattr(llm, "_make_http_client",
+                        lambda: _fake_rerank_client(results, {"total_tokens": 7, "prompt_tokens": 7}, captured))
+    monkeypatch.setattr(llm.config, "load_api_key", lambda: "sk-test")
+    llm.reset_usage()
+    llm.rerank_api("问题", ["a"])
+    u = llm.snapshot_usage()
+    assert u["rerank_calls"] == 1 and u["prompt_tokens"] == 7 and u["total_tokens"] == 7
+
+
+def test_rerank_api_no_key_raises(monkeypatch):
+    # 无密钥时抛出带指引的异常（由 rerank 分发层捕获降级）
+    monkeypatch.setattr(llm.config, "load_api_key", lambda: "")
+    try:
+        llm.rerank_api("问题", ["a"])
+        assert False, "应抛异常"
+    except RuntimeError as e:
+        assert "SILICONFLOW_API_KEY" in str(e)

@@ -1,6 +1,6 @@
 # ToolBook-Paper Agent — 项目全记录
 
-> 版本：v1.7（学习参考面板去掉 [系统编号] 徽章（出处目录仍保留作 D5 卖点）；新增 `section_label` 理顺「1 第一章」编号+标题重复——标题自带「第X章/节/部分」时不再叠加数字编号；150 测试全过。前序：非知识节过滤删 103 节、选书+分书目参考、M5 消融、检索调优①标题前缀 E 17→19/22）
+> 版本：v1.8（云端部署适配：① 重排新增**云端 API 后端**（硅基流动 `/v1/rerank`，`TOOLBOOK_RERANK_BACKEND=api`，去 torch/sentence-transformers，适配 1GB 内存服务器）；② **应用内登录门** `auth.py`（环境变量凭据、常量时间比较，本地不设则关闭）；③ **精简云 Dockerfile** + `.dockerignore` + `requirements-cloud.txt`（不含 torch/mineru）+ `scripts/deploy_server.sh` + `docs/部署指南.md`（Docker `--memory=600m` 硬上限保护现有程序、端口 8501 避开 7860、绝不重启服务器）；**165 测试全过** + 登录门浏览器端到端验证。前序：学习参考去徽章 + `section_label` 理顺编号重复、非知识节过滤删 103 节、选书+分书目参考、M5 消融、检索调优①标题前缀 E 17→19/22）
 > 日期：2026-11-19
 > 用途：竞赛项目（非毕业论文内容）。本文件汇总「我们做了什么、怎么做的、怎么跑、踩过哪些坑、下一步做什么」，供本人回顾与交接。
 > 比赛截止：**2026-11-30**。评审形式：**提交作品包**（非现场答辩）。
@@ -140,11 +140,11 @@
 - **展示理顺（2026-11-19，用户批准）**：① 学习参考面板（命中节 + 相关推荐）**去掉 `[系统编号]` 徽章**（出处目录仍保留，作 D5 防编造卖点）；② 编号+标题重复用纯函数 `sources.py:section_label(number,title)` 理顺——标题已含「第X章/节/部分」时不再叠加冗余数字编号（「1 第一章 …」→「第一章 …」），「3.1 采样…」自带编号仍正常去重，「第三方」等非章节词不误判，空标题回退编号。`render_study` 与 `render_answer` 出处目录三处统一改用该函数（出处目录保留徽章）。
 
 ### 4.8 用量统计（M4 再增强，`llm.py`）
-- 模块全局 `_usage` 累加器 + `reset_usage()` / `snapshot_usage()` / `_record_usage(resp, kind)`。
-- `chat()` / `embed_texts()` 累加调用次数与 `resp.usage` 的 token（`usage=None` 时优雅跳过）。
+- 模块全局 `_usage` 累加器 + `reset_usage()` / `snapshot_usage()` / `_record_usage(resp, kind)`。键含 `chat_calls/embed_calls/rerank_calls/prompt_tokens/completion_tokens/total_tokens`。
+- `chat()` / `embed_texts()` 累加调用次数与 `resp.usage` 的 token（`usage=None` 时优雅跳过）；`rerank_api()` 累加 `rerank_calls` 与 token（云端重排计费）。
 - **所有 LLM 调用都经 `chat()`**（改写/替代查询/上下文化/压缩/提议标题/生成/裁判），自动计入。
 - `ask()` 开始 `reset_usage`、结束 `snapshot_usage` 挂到 `AnswerResult.stats`；`study` 挂 `AnswerResult.study`。
-- UI 底部 caption：`本次消耗 X tokens（输入/输出）· 模型调用 N 次（对话/向量化）· 重排本地不计费`。**本地重排不耗云端 token，不计费。**
+- UI 底部 caption：`本次消耗 X tokens（输入/输出）· 模型调用 N 次（对话/向量化[/重排]）· 重排本地不计费`。**本地重排不耗云端 token 不计费；云端 API 重排（`rerank_calls>0`）计入调用与 token，caption 改显「重排走云端 API」**（`app.py:render_stats` 自适应）。
 
 ### 4.9 选书检索 + 分书目参考（2026-11-19，知识点检索页签）
 - **需求**：原界面回答只来自一本书；改为用户自选资源库中的书（可多选），答案出处**按书分组**展示（分书目参考）。
@@ -161,6 +161,33 @@
 - **执行结果（2026-11-19）**：doc1 **296→234（删 62）**、doc2 **688→647（删 41，含级联子节）**，共删 **103 节**；向量索引重建 **4534 条**，库 chunks 与 Chroma 一致；备份 `data/library.db.bak-20261119-173512`。验证：两本书残留非知识节=0，B.1/附录C/D.3/符号地图/正式章 3.1 全保留。
 - **后果**：删节必须重建索引（一致性必需，非②③实验）；检索语料变化 → M5 基线可能漂移（重跑 E 付费暂缓）；有 `.bak` 可逆（恢复 db+重建即还原）。**143 测试全过**（分类器 6 + 导入剪枝 1 + 级联删 2）。
 
+### 4.11 云端部署适配（2026-11-19，用户批准「按推荐开始」）
+
+**背景与约束**：部署到阿里云 ECS（公网 `47.107.249.54`，Ubuntu 24.04，2 核，**物理内存仅 894M/可用约 380M**，swap 2G，磁盘 30G/余 23G）。**服务器上已有程序 agent-lab（裸进程，端口 7860，约 166M）在跑，用户明令「不要动它」**；该程序无开机自启，**故绝不重启服务器**（重启即丢失）。SSH 密码用户自己输。登录账号密码用户定 `hish/hish`（弱密码已提醒，公网建议改强）。
+
+**可行性实测**（`data/eval/mem_probe.py`，gitignored）：关本地重排（`TOOLBOOK_RERANK=off`）逐阶段量 RSS——baseline 17.9→streamlit 51→core 139.5→chroma(4534 向量)206.3→jieba 259.6→BM25 278.2M，**torch 未被 import**；运行中 streamlit 空闲 RSS 229.4M。结论：**去 torch 后约 350M 峰值，600M 容器上限够用**；本地重排模型需 1–2G，1G 服务器装不下 → 必须改云端重排。
+
+**① 云端重排 API 后端（去 torch）**：
+- `llm.rerank_api(question, texts)`：POST 硅基流动 `/v1/rerank`（`config.RERANK_API_URL`），模型 `BAAI/bge-reranker-v2-m3`，**与向量化同密钥同 base_url**；payload `{model,query,documents,top_n,return_documents:false}`；响应 `results` 按分降序且 `index` 乱序 → **按 index 还原成与输入同序的分数**（0~1）；计入 `rerank_calls`+token；无密钥抛带指引异常。复用 `_make_http_client()`（IPv6 NO_PROXY 坑修复）。
+- `rerank.py` 加**后端分发**：`TOOLBOOK_RERANK_BACKEND`（默认 `local`）＝`api` 时走 `llm.rerank_api`，**失败临时降级 None（不置 `_failed`，恢复后下次仍走 api）**；`local` 时原交叉编码器路径（加载失败永久降级）。`off` 开关与空候选 `[]` 前置不变。**api 后端不受 `_failed` 影响**（本地模型失败不该锁死云端）。
+- 云端镜像**不装 sentence-transformers/torch**；`rerank.py:38` 与 `parsers/pdf_mineru.py:19` 的重依赖均为**函数内懒加载**（api 后端/默认 PyMuPDF 永不触及），故去依赖后 app 仍可 import。
+
+**② 应用内登录门 `auth.py`**（纯函数离线可测）：
+- `auth_enabled()`：`TOOLBOOK_AUTH_USER` 与 `TOOLBOOK_AUTH_PASS` **都非空才开启**（半配置视为关闭）；本地开发不设＝门关闭直接可用。
+- `verify_login(user,password)`：未开启或任一不匹配/空输入返回 False；**`hmac.compare_digest` 按 utf-8 字节常量时间比较**（防时序侧信道、兼容中文密码）。
+- `app.py` 门接在 `set_page_config` 后、侧边栏前：未登录渲染登录表单 + `st.stop()` 阻断全部主内容；登录成功置 `session_state["authed"]` 并 `st.rerun()`；侧边栏「退出登录」清标记回门。**凭据绝不硬编码/入库**，只走环境变量（服务器 `.env` 经 `--env-file` 注入）。
+- **浏览器端到端验证**（8502 临时实例，设 auth+api 环境变量）：未登录只见登录表单（无侧边栏/页签）✓；错密码→「用户名或密码错误」门不放✓；对密码→进应用（侧边栏显两本书、**重排开关标签自适应为「云端重排（更准，走硅基流动 API）」**、退出登录按钮、双页签）✓；退出登录→回门✓。（截图受隐藏视口限制，用 `take_snapshot` 结构核验 + `evaluate_script` 原生 click 提交表单。）
+
+**③ 精简云镜像 + 部署脚本 + 指南**：
+- `requirements-cloud.txt`：pyproject 轻依赖**剔除 sentence-transformers 与 mineru[core]**（torch 携带者），另列 httpx（llm 直接 import）。`uv pip compile` 验证解析出 **128 包，零 torch/nvidia/sentence-transformers/mineru/triton/transformers**（chromadb 带 onnxruntime/numpy 但非 torch）。
+- `Dockerfile`：`python:3.13-slim` + `build-essential libgomp1`（兜底编译/onnxruntime 运行）+ `pip install -r requirements-cloud.txt`（**不用 uv sync 全量 pyproject，避免装 torch**）+ COPY `src/ app.py`；ENV `TOOLBOOK_RERANK_BACKEND=api`、无头 Streamlit、`PYTHONPATH=/app/src`；`EXPOSE 8501`；**data/ 与 .env 不烤进镜像**（运行时挂载/注入）。
+- `.dockerignore`：排除 `.venv/data/.git/.env/**__pycache__/.idea/docs/tests/scripts/*.md`，缩小上下文 + 绝不把密钥/资源库打进镜像。
+- `.env.example`：模板（`SILICONFLOW_API_KEY=` 空、`TOOLBOOK_AUTH_USER=hish`、`TOOLBOOK_AUTH_PASS=` 空、`TOOLBOOK_RERANK_BACKEND=api`），**可提交**（无真实密钥）；`.env` 仍 gitignore。
+- `scripts/deploy_server.sh`（服务器项目根内跑，`bash -n` 通过）：检查 .env 密钥/library.db → 记录部署前 7860/8501 → 缺则装 `docker.io`（**不重启**）→ `docker build` → `docker run -d --name toolbook --restart always -p 8501:8501 --memory=600m --memory-swap=600m --env-file .env -v $ROOT/data:/app/data` → 探活 `/_stcore/health` → 复核 7860 仍在 + 内存上限生效。**登录门凭据未填全会强警告**（公网裸奔风险）。
+- `docs/部署指南.md`：初学者向，标明每条命令在【本地 Git Bash】/【服务器 SSH】/【阿里云控制台】哪里输；本地 `tar`（GNU tar 1.35 验证 basename 排除生效）打 ~90M 包（**排除 data/models 2.2G 本地模型**、.venv/.git/.env/eval/bak）→ scp → 解包 → 建 .env → 跑脚本 → **安全组放行 8501** → 浏览器登录验证 + 确认 7860 原样；含运维/回滚/FAQ/构建内存说明（swap 兜底，运行期 600M 硬上限保护现有程序）。
+- **内存安全机制**：`--memory=600m --memory-swap=600m` 把容器 RAM+swap 合计限死 600M，**OOM 只杀本容器，绝不波及 agent-lab**；端口 8501 避开 7860；不装 nginx（不碰现有反代）；全程不重启主机。
+- **未做（诚实记录）**：本地与服务器均**未装 Docker**，镜像**尚未实际构建/运行**；已验证＝依赖解析零 torch + 重依赖懒加载 + 登录门浏览器端到端 + api 降级离线单测。**真实云端重排 API 调用属付费，未自动跑**（等用户部署时验证）。构建建议在服务器 swap 兜底下进行或本地有 Docker 时构建后传镜像。
+
 ---
 
 ## 5. 代码结构（每个文件职责）
@@ -170,7 +197,7 @@
 |---|---|
 | `config.py` | 全局配置：数据目录、DB/Chroma 路径、硅基流动模型与 base_url、密钥读取、重排设备 |
 | `models.py` | 数据类：Block / ParsedDocument / SectionNode / ImportResult / VerifiedSentence / SourceRef / StudySection / StudyGuide / AnswerResult / PaperInfo |
-| `llm.py` | **硅基流动唯一云端出口**：`embed_texts` / `chat` / `rewrite_query` / `alternative_query` / `contextualize_query` / `summarize_turns` / `propose_titles`；用量累加器；httpx IPv6 坑修复 |
+| `llm.py` | **硅基流动唯一云端出口**：`embed_texts` / `chat` / `rewrite_query` / `alternative_query` / `contextualize_query` / `summarize_turns` / `propose_titles` / `rerank_api`（云端重排 `/v1/rerank`，按 index 还原同序分）；用量累加器（含 `rerank_calls`）；httpx IPv6 坑修复 |
 | `parsers/base.py` | 解析器公共接口/工具 |
 | `parsers/docx_parser.py` | DOCX（python-docx，标题样式） |
 | `parsers/epub_parser.py` | EPUB（ebooklib，NCX/NAV 目录） |
@@ -182,7 +209,8 @@
 | `importer.py` | 导入流水线编排（`import_file`，`llm_fallback=True` 默认开；入库前 `prune_non_content` 剪非知识节） |
 | `bm25_index.py` | jieba + rank_bm25 内存关键词索引 |
 | `vector_index.py` | Chroma PersistentClient 向量索引（`build_vector_index` / `vector_search`，bge-m3；`doc_ids` 多书 `$in` 过滤） |
-| `rerank.py` | 本地 bge-reranker-v2-m3 交叉编码器（CPU，懒加载，失败永久降级 None） |
+| `rerank.py` | 重排分发：`TOOLBOOK_RERANK_BACKEND`＝`local`（默认，bge-reranker-v2-m3 交叉编码器 CPU，懒加载，失败永久降级 None）/ `api`（走 `llm.rerank_api` 云端，免 torch，失败临时降级 None）；`off` 开关与空候选前置 |
+| `auth.py` | **应用内登录门**（纯函数离线可测）：`auth_enabled`（用户名+密码环境变量都非空才开启）/ `verify_login`（`hmac.compare_digest` 常量时间字节比较，兼容中文密码）；凭据只走环境变量，绝不硬编码 |
 | `retrieval.py` | `hybrid_search`：改写→BM25+向量→RRF→父块去重（`doc_ids` 多书锁库）→重排（标题前缀）→top_k SearchHit |
 | `verify.py` | 两级核验：`normalize` / `mechanical_ok` / `split_sentences` / `judge_sentence` / `verify_draft` |
 | `answering.py` | `generate_draft`：逐句带引用草稿（JSON 协议 insufficient/sentences，摘录须原话） |
@@ -204,9 +232,10 @@
 - `scripts/eval_m3.py`：20 题评测（报告 `data/eval/m3_report.json`）。
 - `scripts/eval_m5.py`：**M5 评测与消融 live 跑分器**（A–E 五组各对 30 题跑完整 `ask()`，增量落盘 `data/eval/m5_report.json` + 一页 `docs/评测报告-M5.md`；`--configs` 子集、`--resume` 续跑）。纯打分逻辑在 `evaluation.py`（已单测），脚本本身是触网运行器。
 - `scripts/clean_library.py`：**资源库清理运行器**（备份 db → 分类器剔非知识节 → 重建向量索引 → 报告实删数，见 4.10）。判定逻辑在 `structure.py`（已单测），脚本本身触库。
+- `scripts/deploy_server.sh`：**云端部署运行器**（服务器项目根内跑：装 docker.io→建精简镜像→`--memory=600m` 上限运行→探活→复核现有程序 7860 未动，见 4.11）。配套 `Dockerfile`/`.dockerignore`/`requirements-cloud.txt`/`.env.example`/`docs/部署指南.md`。
 
-### 测试 `tests/`（共 **150 个 pytest 全过**）
-`test_chunking / test_store / test_importer / test_mineru_adapter / test_structure / test_parsers / test_bm25 / test_vector_index / test_rerank / test_retrieval / test_verify / test_llm_fallback / test_paper / test_session / test_answering / test_llm / test_agent / test_study / test_evaluation / test_sources`。
+### 测试 `tests/`（共 **165 个 pytest 全过**）
+`test_chunking / test_store / test_importer / test_mineru_adapter / test_structure / test_parsers / test_bm25 / test_vector_index / test_rerank / test_retrieval / test_verify / test_llm_fallback / test_paper / test_session / test_answering / test_llm / test_agent / test_study / test_evaluation / test_sources / test_auth`。
 - 全部**离线**：假检索/假生成/假核验/假 LLM 客户端，不触网。
 - TDD 纪律：先写失败测试（RED）→ 最小实现（GREEN）→ 重构（REFACTOR）。
 
@@ -280,7 +309,7 @@ uv run python scripts/eval_m3.py     # 20 题评测（约 35 分钟，CPU 重排
 
 ### 7.6 测试
 ```bash
-uv run pytest          # 全量 150 个，离线不触网
+uv run pytest          # 全量 165 个，离线不触网
 ```
 - Windows Git Bash 下建议 `PYTHONIOENCODING=utf-8`。
 - **不要用 `pytest | tail`**（管道会掩盖 pytest 退出码），单独跑。
@@ -297,16 +326,19 @@ uv run pytest          # 全量 150 个，离线不触网
 | 硅基流动 base_url | `https://api.siliconflow.cn/v1` |
 | 对话模型 | `deepseek-ai/DeepSeek-V3.2`（`CHAT_MODEL`） |
 | Embedding | `BAAI/bge-m3`（`EMBED_MODEL`，免费，1024 维） |
-| 重排模型 | `BAAI/bge-reranker-v2-m3`（`RERANK_MODEL`） |
-| 重排本地目录 | `data/models/bge-reranker-v2-m3`（`RERANK_MODEL_DIR`，存在则离线优先） |
+| 重排模型 | `BAAI/bge-reranker-v2-m3`（`RERANK_MODEL`，本地/云端共用模型名） |
+| 云端重排接口 | `https://api.siliconflow.cn/v1/rerank`（`RERANK_API_URL`，与向量化同密钥） |
+| 重排本地目录 | `data/models/bge-reranker-v2-m3`（`RERANK_MODEL_DIR`，存在则离线优先；云端 api 后端不用） |
 | 重排设备 | `cpu`（`RERANK_DEVICE`，避免与 MinerU 争显存） |
 
 | 环境变量 | 作用 |
 |---|---|
 | `SILICONFLOW_API_KEY` | 硅基流动密钥（或写 `.env`） |
 | `TOOLBOOK_PDF_PARSER=mineru` | 切换 PDF 解析器为 MinerU（默认 PyMuPDF） |
-| `TOOLBOOK_RERANK=off` | 关闭本地重排（降级 RRF 序） |
-| `TOOLBOOK_RERANK_DEVICE=cuda` | 重排改用 GPU（默认 cpu） |
+| `TOOLBOOK_RERANK=off` | 关闭重排（降级 RRF 序） |
+| `TOOLBOOK_RERANK_BACKEND=api` | 重排走云端硅基流动 API（免 torch，云镜像默认）；缺省 `local` 本地模型 |
+| `TOOLBOOK_AUTH_USER` / `TOOLBOOK_AUTH_PASS` | 应用登录门账号密码（**两项都非空才开启门**；本地不设＝关闭；云部署经 `.env`→`--env-file` 注入，绝不硬编码） |
+| `TOOLBOOK_RERANK_DEVICE=cuda` | 本地重排改用 GPU（默认 cpu；api 后端无关） |
 | `HF_ENDPOINT` | HF 镜像（rerank.py 默认设 `https://hf-mirror.com`） |
 
 ---
@@ -326,6 +358,7 @@ uv run pytest          # 全量 150 个，离线不触网
 | **M5 选书+分书目参考** | 11.19 | ✅ 完成 | 知识点检索多选书（默认全选）→综合答案→出处按书分组；doc_id 泛化 doc_ids 多书锁库；**134 测试**+程序化端到端验证（界面交互受隐藏视口限制） |
 | **M5 学习参考改名+非知识节清理** | 11.19 | ✅ 完成 | 面板改名「学习参考」；分类器+导入即剪枝+清库删 103 节（doc1 62/doc2 41），正式章节与知识附录全保留，索引重建一致；**143 测试** |
 | **M5 学习参考展示理顺** | 11.19 | ✅ 完成 | 学习参考面板去 [系统编号] 徽章（出处目录保留）；`section_label` 理顺「1 第一章」编号+标题重复；**150 测试**+页面加载验证 |
+| **M6 云端部署适配** | 11.19 | ✅ 代码就绪（待用户部署） | 云端重排 API（去 torch）+ 登录门 `auth.py` + 精简 Dockerfile/部署脚本/指南；依赖解析零 torch、登录门浏览器端到端验证；**165 测试**；镜像未实建（两端均无 Docker），真实云端重排付费调用待部署时验证（见 4.11） |
 | 比赛 | 11.30 | — | 提交作品包 |
 
 > M1–M4 均**提前于排期**完成。实施计划在 `docs/superpowers/plans/2026-11-18-m1/m2/m3/m4/m4b-*.md`。
@@ -430,6 +463,7 @@ PYTHONIOENCODING=utf-8 uv run --no-sync python scripts/eval_m5.py
    - **① ✅ 完成（2026-11-19，用户批准）**：ask() 加 `doc_id` 参数透传检索节点（TDD +2 测试，**124 全过**）；`eval_m5.py` 加 `--doc-id` 锁库开关。锁 doc1 重跑 E（`data/eval/m5_E_doc1_titlefix.json`，不覆盖原消融报告）：**在库 17→19/22(86%)、拒答 8/8、救回 id2(3.2)/id8(5.3) 均升 rank1、零回归**（原 17 命中全保住）。BM25 语料漂移未致回归。**净收益坐实 → title-prefix 修复 + doc_id 接线 + 测试 + 报告已提交**。验证报告 `docs/检索调优验证-M5.md`。剩 id13/14/21 属②③（空正文/公式召回），非重排可解。
 7. **演示彩排 + 录屏备份**（现场网络风险预案：提前预导入资源库、缓存 embedding）。
 8. 整理**作品包**（评审形式为提交作品包，非现场答辩；消融对比表是实验数据卖点）。
+9. **云端部署执行（代码已就绪，待用户按指南操作）**：见 4.11 与 `docs/部署指南.md`。用户侧步骤＝本地打 tar 包（排除 2.2G 本地模型）→ scp 上传 → 服务器解包 → 建 `.env`（填硅基流动密钥 + 登录账号密码，**弱密码 hish/hish 建议改强**）→ `bash scripts/deploy_server.sh`（装 docker.io/build/`--memory=600m` 运行/探活）→ **阿里云安全组放行 8501** → 浏览器 `http://47.107.249.54:8501` 登录验证 + 确认现有程序 7860 原样。**铁律：绝不重启服务器、绝不碰 agent-lab。** 镜像首次构建在服务器（swap 兜底）或本地有 Docker 时构建后传镜像；真实云端重排 API 调用属付费，部署后由用户验证。**SSH 密码用户自己输，助手不代填。**
 
 ---
 
@@ -442,6 +476,7 @@ PYTHONIOENCODING=utf-8 uv run --no-sync python scripts/eval_m5.py
 - M3 评测报告：`data/eval/m3_report.json`（本地，不提交）
 - 核心包：`src/toolbook/`（见第 5 节）
 - 界面：`app.py`
+- **云端部署**：`docs/部署指南.md`（初学者向步骤）+ `Dockerfile` + `.dockerignore` + `requirements-cloud.txt` + `.env.example` + `scripts/deploy_server.sh`（见 4.11）
 - 依赖：`pyproject.toml`
 - 配置：`src/toolbook/config.py`
 

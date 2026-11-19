@@ -13,6 +13,8 @@ SILICONFLOW_BASE_URL = "https://api.siliconflow.cn/v1"
 EMBED_MODEL = "BAAI/bge-m3"
 CHAT_MODEL = "deepseek-ai/DeepSeek-V3.2"
 RERANK_MODEL = "BAAI/bge-reranker-v2-m3"
+# 云端重排接口（硅基流动 /v1/rerank，与向量化同密钥）；云部署用，免本地 torch
+RERANK_API_URL = SILICONFLOW_BASE_URL + "/rerank"
 # 本地模型目录（ModelScope 下载落盘处）；存在时优先于 HF 在线加载
 RERANK_MODEL_DIR = DATA_DIR / "models" / "bge-reranker-v2-m3"
 # 重排默认 CPU（D10 方案B），避免与 MinerU 争显存；可设 cuda
