@@ -14,9 +14,10 @@ WORKDIR /app
 COPY requirements-cloud.txt ./
 RUN pip install --no-cache-dir -r requirements-cloud.txt
 
-# 再拷代码：src 包 + 主程序（app.py 会把 src 加入搜索路径，另设 PYTHONPATH 供 CLI 用）
+# 再拷代码：src 包 + 主程序 + 主题配置（app.py 会把 src 加入搜索路径，另设 PYTHONPATH 供 CLI 用）
 COPY src/ ./src/
 COPY app.py ./
+COPY .streamlit/ ./.streamlit/
 
 # 运行环境：云端重排 API + 无头 Streamlit + 关闭用量上报；密钥/账号由 --env-file 注入
 ENV PYTHONPATH=/app/src \

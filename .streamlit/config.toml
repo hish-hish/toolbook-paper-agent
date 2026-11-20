@@ -1,0 +1,14 @@
+# Streamlit 全局主题：墨与纸（深墨蓝 × 宣纸米 × 朱砂红），与 app.py 注入 CSS 配套
+[theme]
+base = "light"
+primaryColor = "#C2402A"
+backgroundColor = "#FAF6EC"
+secondaryBackgroundColor = "#F2ECDD"
+textColor = "#26324B"
+font = "sans serif"
+
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"
