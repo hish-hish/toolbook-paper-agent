@@ -1,7 +1,7 @@
 # ToolBook-Paper Agent — 项目全记录
 
-> 版本：v1.8（云端部署适配：① 重排新增**云端 API 后端**（硅基流动 `/v1/rerank`，`TOOLBOOK_RERANK_BACKEND=api`，去 torch/sentence-transformers，适配 1GB 内存服务器）；② **应用内登录门** `auth.py`（环境变量凭据、常量时间比较，本地不设则关闭）；③ **精简云 Dockerfile** + `.dockerignore` + `requirements-cloud.txt`（不含 torch/mineru）+ `scripts/deploy_server.sh` + `docs/部署指南.md`（Docker `--memory=600m` 硬上限保护现有程序、端口 8501 避开 7860、绝不重启服务器）；**165 测试全过** + 登录门浏览器端到端验证。前序：学习参考去徽章 + `section_label` 理顺编号重复、非知识节过滤删 103 节、选书+分书目参考、M5 消融、检索调优①标题前缀 E 17→19/22）
-> 日期：2026-11-19
+> 版本：v1.9（**UI 全面美化 + 登录提速**：① 「墨与纸」学术主题——深墨蓝×宣纸米×朱砂红×鎏金×青玉，`.streamlit/config.toml` 主题色 + app.py 注入全套 CSS（登录卡片页/墨色页签/深侧栏/答案卡/学习参考/出处目录/对话气泡/滚动条），印章式内联 SVG logo；② **登录提速**——重依赖（chromadb/openai/langgraph）改「后台线程预热 + 用时懒加载」，登录门顶层只 import 轻量模块，书目/目录树 `st.cache_data` 缓存；暖启动登录→主区 **237ms**、冷启动 ~2.2s（旧版登录页本身被 ~7.5s 重 import 阻塞）；③ 空历史欢迎卡 + 示例问题一键提问。**165 测试全过** + 浏览器端到端验证（登录门/主界面/答案卡/论文详情）。前序 v1.8：云端 API 重排 + 登录门 auth.py + 精简云 Dockerfile + 腾讯云 Windows 部署）
+> 日期：2026-11-20
 > 用途：竞赛项目（非毕业论文内容）。本文件汇总「我们做了什么、怎么做的、怎么跑、踩过哪些坑、下一步做什么」，供本人回顾与交接。
 > 比赛截止：**2026-11-30**。评审形式：**提交作品包**（非现场答辩）。
 
@@ -217,6 +217,54 @@
 
 **遗留**：① ✅ **2026-11-20 公网验收通过**：用户控制台加规则后 3389/27750/8501 全 OPEN、`/_stcore/health`=ok、公网浏览器登录门+主界面 ✓；防火墙模板曾覆盖原 22 规则致公网 SSH 断，**用户当日补 TCP 22 规则后 SSH 恢复 ✓**（四端口全通）；② 弱密码 hish/hish 建议改强（已多次提醒）。
 
+### 4.13 UI 全面美化 + 登录提速（2026-11-20，✅ 完成并浏览器端到端验证）
+
+**背景**：用户看比赛论坛（2026 Qoder 高校创造力大赛，tianchi 532536）其他作品多为定制 Web 前端（React/Three.js，UI 精美），本项目 Streamlit 薄壳显得简陋，且**登录速度很慢**。距 11.30 截止 10 天，重写前端风险高（内核与核验链是招牌），故在 Streamlit 内做彻底视觉改造 + 修登录性能，不动内核。
+
+**① 登录提速（根因 + 修法）**：
+- **根因**：旧 `app.py` 顶层 import `toolbook.agent`（langgraph+retrieval→chromadb）、`vector_index`（chromadb）、`session`（openai/httpx）等重模块，**登录门渲染前就被这些 import 阻塞**。本机实测重 import 合计 ~7.5s（session 3.06 / vector_index 2.13 / agent 1.42 / importer 0.40 / paper 0.35），2 核 2G 云服务器放大数倍 → 登录页迟迟不出。
+- **修法**：顶层只留轻量模块（config/auth/models/sources/store，合计 ~0.3s）；重依赖改**后台守护线程预热**（`@st.cache_resource` 每进程一次，顺序 session→paper→agent→importer→vector_index，先预热登录后立即要用的）+ **用时懒加载**（`ask`/`import_file`/`build_vector_index` 移入函数内 import）；登录后才 import 中等的 session/paper。书目/目录树用 `@st.cache_data(ttl=120)`（db mtime 作失效键，导入后 `st.cache_data.clear()`）。
+- **实测**：暖启动登录→主区渲染 **237ms**、冷启动 ~2.2s（页内精确计时，剔除工具往返开销）；登录页 DOMContentLoaded ~0.3–0.9s。**坑**：`st.cache_data` 用 pickle 序列化，`LibraryStore.list_documents/get_tree` 返回 `sqlite3.Row` 不可 pickle → 缓存函数内 `[dict(r) for r in ...]` 转普通 dict（否则 `UnserializableReturnValueError` 崩主区）。
+
+**② 「墨与纸」学术主题（配色取自项目本体：书/纸/核验/学术）**：
+- 色板：深墨蓝 `#1B2A4A`（侧栏/页签/登录底）× 宣纸米 `#FAF6EC`（主底）× 朱砂红 `#C2402A`（主按钮/引用角标/拒答）× 鎏金 `#D9A441`（徽章/边线/滚动条）× 青玉 `#2E7D5B`（核验通过/学习参考）× 靛蓝 `#3B6FB5`（信息/系统编号）+ 暖冷中性色。`.streamlit/config.toml` 设 primaryColor/背景/文本色；app.py 注入 ~16K CSS。
+- 字体：标题衬线（Georgia/STZhongsong/SimSun 栈）× 正文无衬线（Segoe UI/微软雅黑），**纯系统字体零外部请求**（提速 + 国内网络友好）。
+- 组件：印章式内联 SVG logo（朱砂方印+翻书+核验对勾）；登录页整页墨色渐变+居中宣纸卡片（鎏金顶边+可溯源胶囊）；主区页首横幅+可溯源徽章；墨色胶囊页签；深墨蓝侧栏+书卡；答案卡（出处置顶 chip 条/朱砂引用角标/学习参考青玉边条目/出处按书分组+系统编号徽章）；对话气泡（助手鎏金边纸卡/用户墨青便签，emoji 头像）；主题滚动条；空历史欢迎卡+示例问题一键提问（`pending_{key}` 键传入 chat_block）。
+- **Streamlit 1.67 适配坑（重要）**：① 全面转 **react-aria**（`data-rac`），**无任何 baseweb**——旧 `[data-baseweb="..."]` 选择器全失效；页签是 `div[data-testid="stTab"]`（`aria-selected`），多选标签 `[data-tag]`，对话角色靠 `[aria-label="Chat message from user/assistant"]` 区分，头像是首个 `div[aria-hidden]`。② 用 **CSS `@layer`**，emotion 默认配色优先级高 → 页签等覆盖需 `!important` 才压得过。③ **改 app.py 后 tab 点击 rerun 用缓存代码不重读文件**，须整页重载（navigate）才加载新 CSS（呼应踩坑#9）。
+
+**③ 验证（browser-use，隐藏视口用 evaluate_script 结构+计算样式核验）**：登录门错密码拒✓/对密码进✓；暖登录 237ms✓；主界面页首/页签/深侧栏/双书卡✓；答案卡（种子数据离线渲染，零 API 费）出处 chip/角标/学习参考/分书目录/系统编号/统计/拒答 warning✓；对话气泡用户/助手区分✓；多选胶囊/头像✓；论文列表→详情（懒解析 CORE/目录表/摘要/欢迎卡/对话框/返回）✓；无横向溢出/无异常✓。**165 测试全过**。Dockerfile 补 `COPY .streamlit/`（Linux 备用路线带主题）。**未跑付费 live ask**（按 gate-long-runs 不自动跑；ask 接线仅移 import 位置+加 pending，逻辑未变）。
+
+**④ 用户反馈三处修正（2026-11-20 同日，✅ 浏览器实测通过）**：
+- **侧栏「浏览目录」下拉文字看不清**：下拉框底色是浅纸面（theme 背景 `#FAF6EC`），但 CSS 曾把文字设成米色 `#F0EAD9` → 米字米底。改为深墨 `#26324B !important`（含后代）。**新坑**：1.67 的 selectbox 实为 **react-aria ComboBox**，选中值在 `<input value=...>` 里（不是 span 文本），核验要查 input 的 computed color；展开按钮是 react-aria pressable，**原生 `.click()` 不触发，需派发 pointerdown/pointerup**；选项弹层在 portal，纸面底+深墨字✓。
+- **页首徽章只留「🔍 可溯源」**：删「先核验后返回」「宁缺勿错」两枚；登录页胶囊同步只留「🔍 可溯源到章节页码」（核验链功能本身不动，只是不再当标语展示）。
+- **页首标语换两段新文案**（用户原话「工具数」按项目名义理解为「工具书」）：第一行「添加工具书构建可溯源的资源库，支持资源库问答。」第二行「添加论文，支持对论文问题检索资源库，寻找对应知识点。」（两个 `.tb-hero-tag` div）。
+- 验证：登录页单胶囊✓、登录→主区两行标语+单徽章✓、下拉 input 文字 `rgb(38,50,75)`/底 `rgb(250,246,236)`✓、展开选项同色✓、弹层纸面底✓；py_compile✓。测试服 8503 已停。
+
+**⑤ 论文详情双栏：中间问答 + 右侧原始 PDF 内嵌（可收起）（2026-11-20 同日，✅ 浏览器实测+截图通过）**：
+- 用户要求：进入论文对话后右侧放**论文原始 PDF** 供参考（先做的「摘要/目录/逐页提取文本」面板被用户否为多此一举，已删，`paper.py` 的 `read_pages` 一并移除）；右侧标题**只留论文名**；PDF **可收起**（选择不展示）。
+- 实现：详情顶部一行＝「← 返回论文列表」+ `st.toggle("📄 显示论文 PDF", key="b_show_pdf")`（默认开）。开＝`st.columns([13, 8])`：中栏问答（逻辑未动），右栏＝墨色标题条（仅 `paper.title`）+ **浏览器原生 PDF 阅读器** iframe；关＝问答 `st.container()` 独占全宽。
+- **PDF 内嵌方案演进（三个坑）**：① `st.pdf`（1.67 有）需另装 `streamlit-pdf`，且其 pdf.js 阅读器**只手动缩放（0.5–3 倍）不自适应栏宽**，最小页宽 306px 必溢出右栏 → 弃用（依赖已装后卸载、pyproject/requirements-cloud/uv.lock 全还原）。② `components.html` + base64→blob iframe：组件 iframe 带 **sandbox，Chrome 原生 PDF 阅读器被挡，渲染空白** → 弃用。③ **最终方案**：`runtime.get_instance().media_file_mgr.add(bytes, "application/pdf", coord, file_name=...)` 注册进 Streamlit 媒体服务（同文件自动去重、返回 `/media/<hash>.pdf`），`st.markdown` 输出**顶层文档 iframe**（无沙箱）→ 原生阅读器接管，**默认自适应栏宽**，自带翻页/缩放/下载/打印工具栏。零额外依赖。
+- 验证（截图实证）：CORE 13 页双栏原文清晰渲染、自适应栏宽✓；mini_switch 1 页✓；标题条仅论文名✓；开关收起→问答占全宽 95%、展开→恢复 55% 双栏✓；返回列表→重进✓；知识点检索页签回归✓；无横向溢出/无异常✓；**165 测试全过**。
+- **新坑记录**：1.67 `st.pdf` 组件渲染在 **shadow DOM** 里（`stBidiComponentIsolated`.shadowRoot）；`components.html` 的 iframe testid 是 **stIFrame**（非 stCustomComponentV1）；隐藏视口截图本轮恢复可用（此前 NATIVE_BROWSER_VIEWPORT_UNAVAILABLE）。
+
+**⑥ 右栏升级为 Qoder 式统一可调面板（2026-11-20 同日，✅ 浏览器实测通过）**：
+- 用户对照 Qoder Desktop 对话页提出：右栏要「一个整体」且「可调」。实现两点：① **统一通顶面板**——标题条与 PDF 融为单一边框/圆角/阴影的整块，`position:sticky` 吸顶、高度 `calc(100vh - 82px)` 填满视口，内部 flex 纵向让 PDF 占满剩余高度（像应用侧栏而非浮动卡片）；② **拖拽调宽**——两栏间隙放鎏金→朱砂渐变握把（hover/拖动点亮），拖动实时改两栏 flex 宽度，松手存 `localStorage['tb_pdf_split_pct']`，rerun/重进自动恢复；钳制 22%–62%。收起开关保留（关＝问答全宽）。
+- **实现要点**：拖拽脚本放零高 `components.html`（沙箱含 allow-same-origin 可操作父文档），`MutationObserver` 监听 rerun 重建 DOM 后重挂握把+恢复宽度；纯客户端拖动不触发 rerun。flex 填满链需覆盖 `stElementContainer>stMarkdown>无名div>stMarkdownContainer>iframe` **每一层**（漏掉无名 div 则 PDF 不伸展）；Streamlit markdown 容器默认 `margin-bottom:-16px` 需清零否则标题条与 PDF 重叠。
+- **坑**：面板移动端断点须与 Streamlit 列堆叠断点一致用 **640px**（曾误用 768px，导致 718px 测试视口被当移动端、sticky/拖拽失效）。
+- 验证：sticky 吸顶+面板填满视口（583=665-82）✓；标题条/PDF 无缝（seam=0）✓；拖拽 38%→52% 实时生效+localStorage 记忆✓；rerun 后宽度恢复+握把重挂✓；钳制 22/62✓；收起→问答 95% 全宽、展开→恢复记忆宽度✓；CORE/mini_switch 双论文✓；问答输入/欢迎卡/示例✓；知识点检索回归✓；无溢出/无异常✓；**165 测试全过**。
+
+**⑦ 右栏改为贴边通顶通底固定侧栏 + 右上角图标开关（2026-11-20 同日，✅ 浏览器实测通过）**：
+- 用户再对照 Qoder 顶栏侧栏按钮提出：右栏要「从顶到下的整体、中间没有空缺」，收起/打开参照 Qoder 的**图标按钮**而非内容区文字开关。据此推翻 ⑥ 的 sticky 悬浮卡片形态：① 侧栏改 `position:fixed; top:0;right:0;bottom:0`（`st.container(key="tb_ref_pane")` → `.st-key-tb_ref_pane`），贴窗口右缘、从窗口顶通到窗口底，单一左边框+左投影、无圆角无外边距，标题条与 PDF  seam=0；详情视图主容器 `max-width:none`（`#tb-detail-marker` 标记），问答占满侧栏以左全部区域，右留白=侧栏宽+28px 由脚本同步；② 删除 `st.toggle` 与 `st.columns` 分栏，收起/展开改**右上角 fixed 图标按钮**（sidebar-right SVG，开着时落在墨色标题条右端、收起后浮在纸面上带纸底描边），纯客户端切换 body class `tb-ref-closed`，**不 rerun、PDF iframe 不重载**，状态存 `localStorage['tb_ref_closed']`；③ 握把改 body 级 fixed 贴侧栏左缘，拖拽/钳制/记忆逻辑沿用 ⑥。
+- **坑与修**：a) Streamlit 页签 pane **隐藏不卸载**（`stTabPanel` display:none），侧栏节点仍在 DOM → body 级开关/握把会浮在其它页签、且右留白占用页签 A 宽度；用「祖先链 display:none 检测」(`ancestorHidden`) 判定详情视图是否在当前页签，非当前页签藏开关/握把并清留白，加 **200ms 宽限**避开 rerun 换装瞬间误 hide。b) 重挂防抖原用 `requestAnimationFrame`——**隐藏页签/iframe 里 rAF 停摆**导致切页签后不复位；改父窗口 `setTimeout(60ms)`（隐藏页签仍触发）。c) 开关/握把是 body 级节点，读不到定义在 `:root` 的变量没问题，但**背景页签会冻住 CSS transition**，自动化采样计算样式会停在过渡起点（曾误判收起底色透明）；采样时临时 `transition:none` 复核，真实可见浏览器无此问题。d) 自动化脚本覆写 `window.innerWidth` 后必须彻底 delete 还原（原生是 own accessor，无原型兜底；残留覆写会被后续脚本当"原描述符"恢复，导致 `NaNpx` 假缺陷）。
+- 验证：侧栏 top=0/bottom=视口底/right=窗口右缘✓ seam=0✓；开关落在标题条右端(6..40px)✓；收起→pane none+留白还原 16px+开关纸底(#FFFDF6)+握把藏✓ 展开→恢复记忆宽度✓ 全程无 rerun✓；拖拽实时+钳制 22/62+localStorage✓；整页重载后恢复记忆宽度✓；切页签 A→开关/握把 none+留白 16px、切回 B→恢复✓；窄屏 JS 分支（innerWidth 模拟 600）清留白/藏握把✓ + ≤640 媒体规则（static/480px/握把藏/开关纸底）核验✓；PDF 媒体请求 200 application/pdf✓；控制台仅 Streamlit 自带 sandbox warn 无 error✓；**165 测试全过**。
+
+**⑧ 提交 GitHub + 同步腾讯云上线（2026-11-20 同日，✅ 用户批准后执行并公网验收）**：
+- 用户确认 ⑦ 形态后批准提交与部署。commit `90875ec`（feat: 论文右栏改贴边通顶固定侧栏，右上角图标开关即时收展）含 app.py + `.streamlit/config.toml`（首次入库）+ Dockerfile `COPY .streamlit/`；已推送 origin/master（首次 push 遇 Connection reset，重试即过）。.idea 噪声与个人文件不入库。
+- 部署：scp app.py 与 .streamlit/config.toml → `C:\toolbook`；杀旧进程树（python streamlit + start.ps1 powershell，`taskkill /F /T`）后 `schtasks /run /tn ToolBookApp` 拉起；**未重启机器、未动老阿里云**。
+- 验收：`/_stcore/health`=ok；云端 app.py MD5 `3dbd6baaf53e9a5ae2796271c53a19ea` 与本地一致、`st-key-tb_ref_pane` 标记 8 处、config.toml 在位；公网浏览器登录 hish 后进 CORE 详情：侧栏 top=0/bottom=视口底/right=窗口右缘、seam=0、开关/握把在位、默认 38% 留白 300.84px✓；收起→pane none+留白 16px+开关纸底✓ 展开→恢复✓；PDF 媒体 200 application/pdf✓；控制台仅 Streamlit 自带 sandbox warn 无 error✓。云端 data/papers 已有 CORE 与 mini_switch 两篇，无需上传。
+
+**遗留**：① ✅ 线上已同步 ⑦ 新 UI（2026-11-20，见 ⑧）；② 弱密码 hish/hish 建议改强（已多次提醒，待用户定）。
+
 ---
 
 ## 5. 代码结构（每个文件职责）
@@ -252,7 +300,7 @@
 | `cli.py` | 命令行入口：import/list/tree/show/index/search/ask |
 
 ### 界面与脚本
-- `app.py`：Streamlit 1.67.0 主程序（侧边栏导入/目录树 + 双页签问答 + `render_answer`/`render_study`/`render_stats`）。**内核与 UI 分离**。页签名：**知识点检索**（原模块A）/ **论文检索**（原模块B）。知识点检索含**选书多选框**（默认全选，出处按书分组，见 4.9）；论文检索为**列表→详情两视图**（见 4.5）。
+- `app.py`：Streamlit 1.67.0 主程序（侧边栏导入/目录树 + 双页签问答 + `render_answer`/`render_study`/`render_stats`）。**内核与 UI 分离**。页签名：**知识点检索**（原模块A）/ **论文检索**（原模块B）。知识点检索含**选书多选框**（默认全选，出处按书分组，见 4.9）；论文检索为**列表→详情两视图**（见 4.5）。**v1.9 起**：注入「墨与纸」主题 CSS + 印章 SVG logo + 欢迎卡/示例问题；重依赖后台预热+懒加载、书目/目录 `st.cache_data` 缓存（登录提速，见 4.13）。配套 `.streamlit/config.toml`（主题色）。
 - `scripts/make_demo_books.py`：生成三格式示例书。
 - `scripts/demo_m1.py`：导入+章节树+直查+幂等演示。
 - `scripts/demo_m2.py`：混合检索演示。
@@ -388,6 +436,7 @@ uv run pytest          # 全量 165 个，离线不触网
 | **M5 学习参考改名+非知识节清理** | 11.19 | ✅ 完成 | 面板改名「学习参考」；分类器+导入即剪枝+清库删 103 节（doc1 62/doc2 41），正式章节与知识附录全保留，索引重建一致；**143 测试** |
 | **M5 学习参考展示理顺** | 11.19 | ✅ 完成 | 学习参考面板去 [系统编号] 徽章（出处目录保留）；`section_label` 理顺「1 第一章」编号+标题重复；**150 测试**+页面加载验证 |
 | **M6 云端部署适配** | 11.19 | ✅ 代码就绪（待用户部署） | 云端重排 API（去 torch）+ 登录门 `auth.py` + 精简 Dockerfile/部署脚本/指南；依赖解析零 torch、登录门浏览器端到端验证；**165 测试**；镜像未实建（两端均无 Docker），真实云端重排付费调用待部署时验证（见 4.11） |
+| **M6 UI 美化+登录提速** | 11.20 | ✅ 完成（本地+公网验证，已同步线上） | 「墨与纸」主题全套 CSS+印章 logo+欢迎卡/示例问题；重依赖预热+懒加载+缓存，暖登录 237ms；右栏贴边通顶侧栏+图标开关（4.13 ⑦⑧）；**165 测试**+浏览器端到端（见 4.13） |
 | 比赛 | 11.30 | — | 提交作品包 |
 
 > M1–M4 均**提前于排期**完成。实施计划在 `docs/superpowers/plans/2026-11-18-m1/m2/m3/m4/m4b-*.md`。
@@ -462,6 +511,9 @@ PYTHONIOENCODING=utf-8 uv run --no-sync python scripts/eval_m5.py
 16. **mpssvc 被禁用 = 重启后全端口失联**（含 RDP/SSH，只能控制台 VNC 救）；防火墙服务必须 Automatic。mpssvc 停止时 CIM NetFirewall cmdlets 报 1753。宝塔 Windows 面板端口在 `C:\BtSoft\panel\data\port.pl`，改后重启 btPanel。
 17. **Git Bash `ssh-keygen -N '""'` 会设字面 `""` 密码**（不是空密码），必须 `-N ""`；Windows 管理员 SSH 公钥放 `administrators_authorized_keys` 而非用户目录，且要 icacls 收权到 Administrators/SYSTEM。
 18. **.env 追加粘连**：原文件末行无换行符时，追加的第一行会粘到末行（密钥损坏）。重建文件显式补换行；scp 覆盖后按键数验证。
+19. **Streamlit 1.67 无 baseweb、用 react-aria + @layer**：旧 `[data-baseweb="..."]` CSS 选择器全失效。页签=`div[data-testid="stTab"]`（`aria-selected`）、多选标签=`[data-tag]`、对话角色=`[aria-label="Chat message from user/assistant"]`、头像=首个 `div[aria-hidden]`。emotion 默认配色经 `@layer` 优先级高，覆盖页签等需 `!important`。**改 app.py 后 widget 触发的 rerun 用缓存代码不重读文件，须整页重载才加载新 CSS/逻辑。**
+20. **st.cache_data 不能 pickle sqlite3.Row**：`LibraryStore.list_documents/get_tree` 返回 `sqlite3.Row`，直接缓存抛 `UnserializableReturnValueError` 崩主区；缓存函数内 `[dict(r) for r in ...]` 转普通 dict。
+21. **登录慢根因＝重 import 阻塞登录门**：app.py 顶层 import chromadb/openai/langgraph（本机 ~7.5s）会卡住登录页渲染。修法＝顶层只留轻量模块 + 后台线程预热重依赖（`@st.cache_resource` 每进程一次）+ 用时懒加载。浏览器测速要用**页内 performance.now 轮询**（navigate→evaluate 的工具往返开销会污染计时，曾误读 17s，实际暖登录 237ms）。
 
 ---
 
