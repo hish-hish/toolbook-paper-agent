@@ -193,6 +193,30 @@
   - **用户决定：准备换 4GB 服务器**。4GB 账＝~940MB 占用、**余 ~3GB** → 不借 swap、运行丝滑、**服务器上直接构建镜像也无 OOM 风险**。**现有代码原样可跑 4GB，一行不用改**；唯一可选小调整＝部署脚本 `--memory=600m`→`1g`（重负载余量，600M 亦够）。**不建议趁 4GB 改回本地重排**（云端用同一模型 bge-reranker-v2-m3、效果一样且常免费，改回纯属把简单事搞复杂）。
   - **消除「1GB 不确定」的最划算一步（待用户说跑）**：本地用 api 后端真问一题、量完整问答峰值 RSS（一次付费 API，便宜），反推服务器宽裕度。**按 [[feedback-gate-long-runs]] 不自动跑**。换 4GB 后此实测必要性下降。
 
+### 4.12 腾讯云 Windows 部署实录（2026-11-20，✅ 已完成并重启持久化验证）
+
+**背景**：用户实际购入**腾讯云 Windows Server 2022**（公网 `175.178.177.74`，2 核 **2G**，宝塔 Windows 面板），放弃 Ubuntu/Docker 路线（4.11 的 Dockerfile/deploy_server.sh 留作 Linux 备用）。用户授**全权 SSH 操作**（ed25519 密钥 `~/.ssh/toolbook_deploy`，服务器键放 `C:\ProgramData\ssh\administrators_authorized_keys` + icacls 收权）。**老阿里云 47.107.249.54 的 agent-lab 依旧绝不动/绝不重启**；新腾讯服务器允许重启（已做重启测试）。
+
+**访问恢复与系统修复**（`scripts/server_recon*.ps1` 只读体检 → `server_fix1/2/3.ps1`）：
+- 用户重启后全端口失联，根因＝**Windows 防火墙服务 mpssvc 被 Stopped+Disabled**（重启后默认全丢包，连 RDP 都进不去）。修复：mpssvc 置 Automatic+启动+启用配置文件，建 `tb-ssh(22)/tb-rdp(3389)/tb-bt(27750)/tb-app(8501)` 放行规则。
+- 宝塔面板端口 `C:\BtSoft\panel\data\port.pl` 原为 8888，与云侧已有规则 27750 不符 → 改写 27750 + 重启 btPanel。
+- 页面文件原系统托管偏小 → 注册表 `PagingFiles="C:\pagefile.sys 2048 4096"`（重启生效，实测 AllocatedBaseSize=2048）。
+- 分层定位法：loopback / 内网 IP(10.1.0.17) / 公网 IP 三层 connect 测试区分 OS 防火墙 vs 腾讯云防火墙。**OS 侧全通后公网仍丢包＝腾讯云控制台防火墙只放行了 22**，需用户在控制台补 3389/27750/8501（截至部署完成仍待用户操作）。
+
+**环境与传输**：Python 3.13.9 走 **npmmirror 二进制**静默装 `C:\Python313`（GitHub 直连会卡）；venv `C:\toolbook\.venv`；pip 清华源装 `requirements-cloud.txt`（**零 torch**）。项目+书库 tar 56M（排除 .venv/.git/.env/data/models/eval 等）→ `C:\toolbook`；`.env` 单独 scp（4 键：SILICONFLOW_API_KEY / TOOLBOOK_AUTH_USER=hish / TOOLBOOK_AUTH_PASS=hish / TOOLBOOK_RERANK_BACKEND=api），**全程未显示密钥**。
+
+**启动与自启**：`C:\toolbook\start.ps1`（源 `scripts/server_start.ps1`）解析 .env→进程环境、PYTHONIOENCODING=utf-8、**PYTHONFAULTHANDLER=1**、无头 Streamlit 0.0.0.0:8501、末尾 **`exit $LASTEXITCODE`**。计划任务 **ToolBookApp**（`scripts/server_register_task.ps1`）：AtStartup、SYSTEM 最高权限、失败重启 3 次/间隔 1 分钟、无执行时限。调试用临时任务 tbfix1/tbinstall/tbappdebug 已删除。
+
+**静默崩溃排查（本次最大坑）**：问答提交后数秒 app 无 traceback「exit 0」消失，复现 3 次；前台 SSH 对照同样死 → 排除计划任务因素。**Application 事件日志 APPCRASH**：python.exe 崩溃模块 **MSVCP140.dll 14.0.24215.1（2016 老版 VC++ 运行库）**、异常 c0000005 → chroma 的 hnswlib C++ 扩展需要新版运行库，一调即原生崩溃（Python 层无异常）。修复：官方 `vc_redist.x64.exe`（aka.ms/vs/17/release）静默装 → **14.44.35211.0**，无需重启即愈。
+
+**验收（SSH 隧道 18501→8501 + browser-use，绕过云防火墙）**：
+- 登录门：错密码拒 ✓、hish/hish 进 ✓、双书在库 ✓、「云端重排」标签 ✓。
+- 真实问答「奈奎斯特采样定理…混叠」：3 句全核验通过、出处 3.1 节(p21)、出处目录 5 条重试 0、学习参考完整、8806 tokens/6 次调用/重排走云端 API ✓。
+- **重启持久化测试全绿**：mpssvc/sshd/btPanel 均 Automatic+Running；ToolBookApp 开机自启 8501；pagefile 2048M 生效；3389/27750 监听；重启后问答复验 ✓（9205 tokens/7 次调用）。
+- **内存实测**：app 稳态 ~350MB；重启前 free 仅 87MB（紧），重启后 free 511MB、pagefile 用 103MB → **2G 可用但不宽裕**（Defender ~300MB 是大头），诚实告知用户。
+
+**遗留**：① 腾讯云控制台防火墙放行 3389/27750/8501（用户操作，OS 侧已就绪）；② 弱密码 hish/hish 建议改强（已多次提醒）；③ 公网直连验收待①完成后补。
+
 ---
 
 ## 5. 代码结构（每个文件职责）
@@ -433,6 +457,11 @@ PYTHONIOENCODING=utf-8 uv run --no-sync python scripts/eval_m5.py
 11. **评测耗时**：20 题全量约 **35 分钟**（超纲题各跑满 3 轮检索，共约 40 轮，每轮 CPU 重排是瓶颈）；后台管道输出有缓冲，中途看不到逐题进度，只能看进程 CPU 时间判断是否卡死。
 12. **GitHub 推送**：连接间歇性重置，push 失败时隔几分钟重试即可。
 13. **`pytest | tail` 掩盖退出码**：单独跑 pytest，别接管道。
+14. **Windows VC++ 运行库过旧 → 原生静默崩溃**：Server 2022 自带 MSVCP140.dll 14.0（2016），chroma/hnswlib 等新版 C++ 扩展一调就 c0000005 崩溃，**Python 无 traceback、进程直接消失**。装最新 `vc_redist.x64.exe`（14.44）即愈。**进程无声死亡先查 Application 事件日志的 APPCRASH（WER 1000/1001），别只盯 app 日志。**
+15. **`powershell -File` 掩盖原生退出码**：脚本里 python 崩溃，powershell 自身仍返回 0 → 「exit 0」假象。启动脚本末尾必须 `exit $LASTEXITCODE`（计划任务失败重启也依赖真实退出码）。
+16. **mpssvc 被禁用 = 重启后全端口失联**（含 RDP/SSH，只能控制台 VNC 救）；防火墙服务必须 Automatic。mpssvc 停止时 CIM NetFirewall cmdlets 报 1753。宝塔 Windows 面板端口在 `C:\BtSoft\panel\data\port.pl`，改后重启 btPanel。
+17. **Git Bash `ssh-keygen -N '""'` 会设字面 `""` 密码**（不是空密码），必须 `-N ""`；Windows 管理员 SSH 公钥放 `administrators_authorized_keys` 而非用户目录，且要 icacls 收权到 Administrators/SYSTEM。
+18. **.env 追加粘连**：原文件末行无换行符时，追加的第一行会粘到末行（密钥损坏）。重建文件显式补换行；scp 覆盖后按键数验证。
 
 ---
 
@@ -468,7 +497,7 @@ PYTHONIOENCODING=utf-8 uv run --no-sync python scripts/eval_m5.py
    - **① ✅ 完成（2026-11-19，用户批准）**：ask() 加 `doc_id` 参数透传检索节点（TDD +2 测试，**124 全过**）；`eval_m5.py` 加 `--doc-id` 锁库开关。锁 doc1 重跑 E（`data/eval/m5_E_doc1_titlefix.json`，不覆盖原消融报告）：**在库 17→19/22(86%)、拒答 8/8、救回 id2(3.2)/id8(5.3) 均升 rank1、零回归**（原 17 命中全保住）。BM25 语料漂移未致回归。**净收益坐实 → title-prefix 修复 + doc_id 接线 + 测试 + 报告已提交**。验证报告 `docs/检索调优验证-M5.md`。剩 id13/14/21 属②③（空正文/公式召回），非重排可解。
 7. **演示彩排 + 录屏备份**（现场网络风险预案：提前预导入资源库、缓存 embedding）。
 8. 整理**作品包**（评审形式为提交作品包，非现场答辩；消融对比表是实验数据卖点）。
-9. **云端部署执行（代码已就绪，待用户按指南操作）**：见 4.11 与 `docs/部署指南.md`。**用户决定换 4GB 服务器（2026-11-19）**——4GB 余 ~3GB、不借 swap、可直接在服务器构建镜像，现有代码原样可跑（可选把脚本 `--memory=600m`→`1g`）；原 1GB 偏紧靠 swap 兜底（详见 4.11 算账）。用户侧步骤＝本地打 tar 包（排除 2.2G 本地模型）→ scp 上传 → 服务器解包 → 建 `.env`（填硅基流动密钥 + 登录账号密码，**弱密码 hish/hish 建议改强**）→ `bash scripts/deploy_server.sh`（装 docker.io/build/`--memory` 上限运行/探活）→ **阿里云安全组放行 8501** → 浏览器 `http://<新服务器IP>:8501` 登录验证 + 确认现有程序 7860 原样（若同机）。**铁律：绝不重启服务器、绝不碰 agent-lab。** 真实云端重排 API 调用属付费，部署后由用户验证。**SSH 密码用户自己输，助手不代填。** 换服务器后 IP/安全组以新实例为准，指南命令通用。
+9. **云端部署执行**：✅ **2026-11-20 完成（腾讯云 Windows 175.178.177.74，见 4.12）**——原生 Python+venv+计划任务自启（非 Docker），登录门+真实问答+重启持久化全部验收通过；VC++ 运行库过旧导致的静默崩溃已修（踩坑#14）。**剩用户一步：腾讯云控制台防火墙放行 3389/27750/8501**（OS 侧已就绪，当前公网仅 22 通）。原 Linux/Docker 方案（4.11、`docs/部署指南.md`）留作备用。**铁律不变：老阿里云 agent-lab 绝不动/绝不重启。** 弱密码 hish/hish 建议改强。
 
 ---
 
@@ -481,7 +510,7 @@ PYTHONIOENCODING=utf-8 uv run --no-sync python scripts/eval_m5.py
 - M3 评测报告：`data/eval/m3_report.json`（本地，不提交）
 - 核心包：`src/toolbook/`（见第 5 节）
 - 界面：`app.py`
-- **云端部署**：`docs/部署指南.md`（初学者向步骤）+ `Dockerfile` + `.dockerignore` + `requirements-cloud.txt` + `.env.example` + `scripts/deploy_server.sh`（见 4.11）
+- **云端部署**：`docs/部署指南.md`（Linux/Docker 备用方案）+ `Dockerfile` + `.dockerignore` + `requirements-cloud.txt` + `.env.example` + `scripts/deploy_server.sh`（见 4.11）；**Windows 实机部署（现行）**：`scripts/server_*.ps1`（recon 体检/fix1-3 修复/install_env 装环境/start 启动/register_task 自启/vc_redist 运行库，见 4.12）
 - 依赖：`pyproject.toml`
 - 配置：`src/toolbook/config.py`
 
