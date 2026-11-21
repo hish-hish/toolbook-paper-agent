@@ -4,6 +4,7 @@
 > 日期：2026-11-20
 > 用途：竞赛项目（非毕业论文内容）。本文件汇总「我们做了什么、怎么做的、怎么跑、踩过哪些坑、下一步做什么」，供本人回顾与交接。
 > 比赛截止：**2026-11-30**。评审形式：**提交作品包**（非现场答辩）。
+> **✅ 11-21 待办「改 API」已处理（新会话必读）**：用户答复实际是**换对话模型**（非换密钥、非换服务商）——`CHAT_MODEL` 已由 `DeepSeek-V3.2` 改为 **`deepseek-ai/DeepSeek-V4.1-Flash`**，本地冒烟验证 + 165 测试通过，详见 **4.14**。**剩余待办**：① ~~云端同步~~ ✅ **已完成**（11-21 scp + 按用户要求清空 auth 两行关登录门 + 重启探活 ok，详见 4.14；⚠️ 公网 8501 现无鉴权）；② 换模型的检索/核验回归（锁 doc1 重跑 E 组，付费 4–5 小时长任务，按约定不自动启动）。密钥本身未动（本地 `.env` 与腾讯云 `C:\toolbook\.env` 仍是同一个，只放 .env，绝不贴聊天、绝不提交 git）。原设想的「一个模型思考、一个模型检索」经查现有架构本已分层（V4.1-Flash 思考 / bge-m3 向量化 / bge-reranker 重排，三者同密钥同平台）；若要按任务拆强/弱两档 LLM，`chat()` 的 `model` 形参现成，见 4.14 待办③。
 
 ---
 
@@ -43,7 +44,7 @@
 | 编号 | 决策点 | 最终选择 |
 |---|---|---|
 | D1 | Agent 编排 | **LangGraph**（状态图，核验失败→重检索循环） |
-| D2 | LLM 接入 | **国内云端 API**：硅基流动 `deepseek-ai/DeepSeek-V3.2` |
+| D2 | LLM 接入 | **国内云端 API**：硅基流动 `deepseek-ai/DeepSeek-V4.1-Flash`（2026-11-21 由 V3.2 切换，见 4.14） |
 | D3 | PDF 解析 | **MinerU 4.2.3**（进程内 `parse()`，pipeline 后端）；**默认 PyMuPDF**，环境变量切换 |
 | D4 | DOCX/EPUB | **python-docx + ebooklib** |
 | D5 | 章节识别 | **规则优先 + LLM 兜底**（兜底结果标「系统编号」） |
@@ -265,6 +266,26 @@
 
 **遗留**：① ✅ 线上已同步 ⑦ 新 UI（2026-11-20，见 ⑧）；② 弱密码 hish/hish 建议改强（已多次提醒，待用户定）。
 
+### 4.14 对话模型切换 DeepSeek-V4.1-Flash（2026-11-21，✅ 本地已改并冒烟验证；云端同步与回归待办）
+
+**背景**：11-21 待办「改 API」实际落地为**换对话模型**（密钥未动）。先厘清密钥拓扑：全项目只有一个密钥源 `config.load_api_key()`，两个出口——`llm.get_client()`（OpenAI 兼容客户端，embeddings + chat 共用）与 `llm.rerank_api()`（httpx 直连 `/v1/rerank`，`Bearer` 同一个 key）。所以 **chat / embedding / 云端重排三样吃同一个 `SILICONFLOW_API_KEY`、同一个 base_url**；本地 `TOOLBOOK_RERANK_BACKEND=local` 时重排走本地模型不碰密钥，云上是 api 后端才碰。
+
+**为什么能直接换模型名**：`get_client()` 把 base_url 定死在硅基流动，但 `chat()` 有 `model` 形参、模型名只是每次请求的一个字段 → **同平台内换模型名零改造**；若要「思考一家、检索另一家」则需第二个 key + 第二个客户端 + `_record_usage` 按服务商分账，属中等改造，本次未做。
+
+**改动（一行）**：`config.py:14` `CHAT_MODEL` `deepseek-ai/DeepSeek-V3.2` → **`deepseek-ai/DeepSeek-V4.1-Flash`**。
+- **精确 ID 取证**：用 `.env` 密钥调免费只读接口 `GET /v1/models`（不上传任何内容、不打印密钥）核实清单含 `deepseek-ai/DeepSeek-V4.1-Flash` 与 `BAAI/bge-m3`、`BAAI/bge-reranker-v2-m3`。⚠️ 商品名/宣传名里的「1017」「(max)」**不进 API ID**，填错必 404。
+- **`EMBED_MODEL` 未动**：换它必须重建 4534 条向量索引 + 重跑评测，风险最大，不在本次范围。
+
+**冒烟验证（1 次真实调用，329 tokens / 3.9s）**：用 `verify._JUDGE_SYSTEM` + 裁判 prompt 走真实 `llm.chat()` → 返回**纯 JSON、`re` 解析 OK、quote 逐字锚回英文原文**。这一步是防「新模型把正文塞进 `reasoning_content` 导致 `message.content` 为空 → 裁判全 None → 整题拒答且界面看不出根因」的静默降级。⚠️ **注意 `completion_tokens=190` 远大于输出 JSON 长度**，疑似含思维链开销，实际是否省钱待核。**165 测试全过**（模型名无任何测试依赖，全离线假客户端）。
+
+**云端同步（2026-11-21 ✅ 已完成，用户批准）**：
+- scp `src/toolbook/config.py` → `C:\toolbook\src\toolbook\config.py`，远端 MD5 `85D5D8E5D4ABAF85FAEC6C688B953D4F` 与本地一致；`EMBED_MODEL` / `RERANK_MODEL` / 密钥 / base_url 全未动。
+- **按用户要求暂时关闭登录门**：`C:\toolbook\.env` 先备份为 `.env.bak-20261121-124755`，再把 `TOOLBOOK_AUTH_USER` / `TOOLBOOK_AUTH_PASS` **两行值清空**（键保留、其余行不动，脚本只打印键名与值长度、绝不打印密钥）→ `auth.py:auth_enabled()` 「两项都非空才开启」判为关闭。**代价＝公网 8501 无鉴权裸奔，任何人可访问并烧硅基流动 key**（用户知情选择，恢复只需从备份取回两行值 + 重启任务）。
+- 运维脚本 `scripts/server_sync_1121.ps1`（备份 .env → 清 auth → 校验 config → 杀进程树 → `schtasks /run` → 探活）。**踩坑（见 §11 #22）**：`taskkill` 步骤因「父树已连带杀子进程、再补刀子 PID 找不到」+ `$ErrorActionPreference='Stop'` + `2>&1` 抛终止异常，**导致脚本没跑到重启、云端服务被停了一段时间**；已手动补 `schtasks /run /tn ToolBookApp` 拉起。
+- 验收：`/_stcore/health` = `ok`，python 进程在跑（pid 4428）。**未做**：公网浏览器确认跳过登录页直达主界面、云端新模型跑一题真实问答（云端是 `rerank=api` 后端，链路不同于本地冒烟）。
+
+**待办**：① ~~云端同步~~ ✅ 已完成（上条）；② **回归**：换模型影响改写/上下文化/生成/**核验裁判**全链，M4 指代消解（B4）与 M5 拒答 8/8 是敏感点 → 建议锁 doc1 重跑 E 组（付费 4–5 小时长任务，**不自动启动**）；③ 若想「检索侧轻任务用 Flash、核验裁判留强模型」，`chat()` 的 `model` 形参已现成，只需加 `config.QUERY_MODEL` 并在 `rewrite_query`/`alternative_query`/`contextualize_query` 传入（改动小，未做）；④ **公网裸奔期间建议盯一下硅基流动用量**，评审结束后恢复登录门；⑤ 云端 `Flash` 的 `completion_tokens` 疑含思维链开销（本地冒烟 190 tokens 对一段短 JSON），是否真省钱待一次完整问答统计条确认。
+
 ---
 
 ## 5. 代码结构（每个文件职责）
@@ -401,7 +422,7 @@ uv run pytest          # 全量 165 个，离线不触网
 | SQLite | `data/library.db`（`DEFAULT_DB`） |
 | Chroma | `data/chroma/`（`CHROMA_DIR`） |
 | 硅基流动 base_url | `https://api.siliconflow.cn/v1` |
-| 对话模型 | `deepseek-ai/DeepSeek-V3.2`（`CHAT_MODEL`） |
+| 对话模型 | `deepseek-ai/DeepSeek-V4.1-Flash`（`CHAT_MODEL`，2026-11-21 切换，见 4.14） |
 | Embedding | `BAAI/bge-m3`（`EMBED_MODEL`，免费，1024 维） |
 | 重排模型 | `BAAI/bge-reranker-v2-m3`（`RERANK_MODEL`，本地/云端共用模型名） |
 | 云端重排接口 | `https://api.siliconflow.cn/v1/rerank`（`RERANK_API_URL`，与向量化同密钥） |
@@ -514,6 +535,7 @@ PYTHONIOENCODING=utf-8 uv run --no-sync python scripts/eval_m5.py
 19. **Streamlit 1.67 无 baseweb、用 react-aria + @layer**：旧 `[data-baseweb="..."]` CSS 选择器全失效。页签=`div[data-testid="stTab"]`（`aria-selected`）、多选标签=`[data-tag]`、对话角色=`[aria-label="Chat message from user/assistant"]`、头像=首个 `div[aria-hidden]`。emotion 默认配色经 `@layer` 优先级高，覆盖页签等需 `!important`。**改 app.py 后 widget 触发的 rerun 用缓存代码不重读文件，须整页重载才加载新 CSS/逻辑。**
 20. **st.cache_data 不能 pickle sqlite3.Row**：`LibraryStore.list_documents/get_tree` 返回 `sqlite3.Row`，直接缓存抛 `UnserializableReturnValueError` 崩主区；缓存函数内 `[dict(r) for r in ...]` 转普通 dict。
 21. **登录慢根因＝重 import 阻塞登录门**：app.py 顶层 import chromadb/openai/langgraph（本机 ~7.5s）会卡住登录页渲染。修法＝顶层只留轻量模块 + 后台线程预热重依赖（`@st.cache_resource` 每进程一次）+ 用时懒加载。浏览器测速要用**页内 performance.now 轮询**（navigate→evaluate 的工具往返开销会污染计时，曾误读 17s，实际暖登录 237ms）。
+22. **PowerShell 运维脚本：`taskkill` 的 stderr 被 `$ErrorActionPreference='Stop'` 当终止异常，中断后续关键步骤**：`taskkill /F /T` 杀父进程树时已连带杀掉子 python，再对子 PID 补刀输出「没有找到进程」到 stderr，脚本里接了 `2>&1` → PowerShell 视为 `NativeCommandError` 抛终止异常，**其后的 `schtasks /run` 根本没执行**，云端服务停着没人拉起，直到手动补跑（见 4.14）。修法：杀进程前先按父子树去重只杀根 PID，或把清理动作包 `try/catch` / 临时 `$ErrorActionPreference='Continue'`。**含「重启服务」这类不可跳过后置步骤的脚本，绝不能让清理动作具备中断能力。** 另：SSH 回传的 PowerShell 中文报错是 GBK，Git Bash 里 grep 要加 `-a` 才不被当二进制丢弃。
 
 ---
 
@@ -562,7 +584,7 @@ PYTHONIOENCODING=utf-8 uv run --no-sync python scripts/eval_m5.py
 - M3 评测报告：`data/eval/m3_report.json`（本地，不提交）
 - 核心包：`src/toolbook/`（见第 5 节）
 - 界面：`app.py`
-- **云端部署**：`docs/部署指南.md`（Linux/Docker 备用方案）+ `Dockerfile` + `.dockerignore` + `requirements-cloud.txt` + `.env.example` + `scripts/deploy_server.sh`（见 4.11）；**Windows 实机部署（现行）**：`scripts/server_*.ps1`（recon 体检/fix1-3 修复/install_env 装环境/start 启动/register_task 自启/vc_redist 运行库，见 4.12）
+- **云端部署**：`docs/部署指南.md`（Linux/Docker 备用方案）+ `Dockerfile` + `.dockerignore` + `requirements-cloud.txt` + `.env.example` + `scripts/deploy_server.sh`（见 4.11）；**Windows 实机部署（现行）**：`scripts/server_*.ps1`（recon 体检/fix1-3 修复/install_env 装环境/start 启动/register_task 自启/vc_redist 运行库/**sync_1121 换对话模型+清 auth 关登录门+重启探活**，见 4.12/4.14）
 - 依赖：`pyproject.toml`
 - 配置：`src/toolbook/config.py`
 

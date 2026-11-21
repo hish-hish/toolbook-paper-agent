@@ -11,7 +11,7 @@ CHROMA_DIR = DATA_DIR / "chroma"
 # 硅基流动 OpenAI 兼容接口与模型（D2/D8/D10 定案）
 SILICONFLOW_BASE_URL = "https://api.siliconflow.cn/v1"
 EMBED_MODEL = "BAAI/bge-m3"
-CHAT_MODEL = "deepseek-ai/DeepSeek-V3.2"
+CHAT_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash"
 RERANK_MODEL = "BAAI/bge-reranker-v2-m3"
 # 云端重排接口（硅基流动 /v1/rerank，与向量化同密钥）；云部署用，免本地 torch
 RERANK_API_URL = SILICONFLOW_BASE_URL + "/rerank"
